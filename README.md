@@ -95,3 +95,24 @@ Shundan so'ng menyuda **📱 Ilovani ochish** tugmasi va chat pastidagi **Ilova*
 Doimiy ishlatish uchun serverda o'z domeningiz + nginx (HTTPS) orqali `WEB_PORT` ga proksi qiling.
 
 Xavfsizlik: har bir API so'rovi Telegram `initData` imzosi (bot tokeni bilan HMAC) orqali tekshiriladi, 24 soatdan eski imzo rad etiladi.
+
+## 🚀 Server (production)
+
+| | |
+|---|---|
+| Manzil | https://fin.coffee-nap.uz |
+| Papka | `/home/azureuser/fin-zayavka` |
+| Servis | `systemd` → `fin-zayavka` (port 8095, nginx orqali HTTPS) |
+| Zaxira | har kuni 03:15 (UTC) → `~/backups/fin-zayavka/`, 14 kun saqlanadi |
+
+```bash
+# Yangilash (lokalda push qilgandan keyin):
+ssh azureuser@SERVER 'bash ~/fin-zayavka/deploy/update.sh'
+
+# Loglar va holat:
+ssh azureuser@SERVER 'journalctl -u fin-zayavka -f'
+ssh azureuser@SERVER 'sudo systemctl restart fin-zayavka'
+```
+
+⚠️ Bitta bot tokeni bilan faqat **bitta** nusxa ishlashi mumkin: server ishlayotganda botni lokal kompyuterda ishga tushirmang
+(yoki lokal sinov uchun alohida test bot tokenidan foydalaning).
