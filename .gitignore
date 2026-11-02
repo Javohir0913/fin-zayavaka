@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+.env
+data/
+*.xlsx
+*.pem
+*.db
+.mpl/

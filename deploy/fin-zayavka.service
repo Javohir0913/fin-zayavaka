@@ -1,0 +1,17 @@
+[Unit]
+Description=Fin zayavka - xarajat zayavkalari Telegram boti + Mini App
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=azureuser
+WorkingDirectory=/home/azureuser/fin-zayavka
+ExecStart=/home/azureuser/fin-zayavka/.venv/bin/python -m bot
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+Environment=MPLCONFIGDIR=/home/azureuser/fin-zayavka/data/.mpl
+
+[Install]
+WantedBy=multi-user.target
