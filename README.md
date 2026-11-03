@@ -96,6 +96,22 @@ Doimiy ishlatish uchun serverda o'z domeningiz + nginx (HTTPS) orqali `WEB_PORT`
 
 Xavfsizlik: har bir API so'rovi Telegram `initData` imzosi (bot tokeni bilan HMAC) orqali tekshiriladi, 24 soatdan eski imzo rad etiladi.
 
+### 🌐 Brauzerdan ishlatish (Telegram orqali kirish)
+
+Xuddi shu manzilni (`https://fin.coffee-nap.uz`) oddiy brauzerda ochsangiz, **Telegram Login** tugmasi chiqadi.
+Kirgandan keyin hamma narsa Mini App bilan bir xil ishlaydi: rollar, ruxsatlar, audit log. Yangi odam kirsa,
+u `pending` bo'ladi va adminga xabar boradi.
+
+- **Bir martalik sozlash:** @BotFather → `/setdomain` → botni tanlang → `fin.coffee-nap.uz`. Busiz tugma
+  "Bot domain invalid" deb ko'rsatadi.
+- **Tekshiruv:** Telegram Login Widget imzosi tekshiriladi (`SHA256(bot_token)` kaliti bilan HMAC). Imzo 24 soatdan
+  eski bo'lmasligi kerak.
+- **Sessiya:** 30 kunlik, `HttpOnly` + `Secure` + `SameSite=Strict` cookie. Bazada (`web_sessions`) faqat
+  tokenning SHA256 xeshi saqlanadi.
+- **Chiqish:** "Sozlamalar → Chiqish" sessiyani o'chiradi.
+- **Bloklangan foydalanuvchi:** mavjud sessiya ham darhol ishlamay qoladi.
+- **CSRF himoyasi:** cookie bilan keladigan har bir API so'rovi `X-Requested-With: fetch` sarlavhasini talab qiladi.
+
 ## 🚀 Server (production)
 
 | | |

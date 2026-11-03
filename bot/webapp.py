@@ -11,7 +11,7 @@ from aiogram.types import BufferedInputFile
 from aiogram.utils.web_app import safe_parse_webapp_init_data
 from aiohttp import web
 
-from . import audit, db, reports, services
+from . import audit, db, reports, services, webauth
 from . import rates as rates_mod
 from .config import BASE_CURRENCY, BOT_TOKEN, WEB_HOST, WEB_PORT
 
@@ -26,6 +26,7 @@ INIT_DATA_MAX_AGE = 24 * 3600
 PAGE = 20
 
 BOT_KEY = web.AppKey("bot", Bot)
+BOT_NAME_KEY = web.AppKey("bot_username", str)
 
 
 # ---------------------------------------------------------------- yordamchilar
@@ -192,24 +193,36 @@ async def auth_mw(request: web.Request, handler):
             resp.headers["Cache-Control"] = "no-cache"
         return resp
     try:
+        if request.path in PUBLIC_API:
+            return await handler(request)
         auth = request.headers.get("Authorization", "")
-        if not auth.startswith("tma "):
-            raise ApiError(401, "no_auth")
-        try:
-            init = safe_parse_webapp_init_data(BOT_TOKEN, auth[4:])
-        except ValueError:
-            raise ApiError(401, "bad_auth")
-        if time.time() - init.auth_date.timestamp() > INIT_DATA_MAX_AGE:
-            raise ApiError(401, "expired")
-        tg = init.user
-        if not tg:
-            raise ApiError(401, "bad_auth")
-        full_name = " ".join(x for x in (tg.first_name, tg.last_name) if x) or str(tg.id)
-        user, is_new = await db.upsert_user(tg.id, full_name, tg.username)
-        if is_new and user["role"] == "pending":
-            await services.notify_new_user(request.app[BOT_KEY], tg.id, full_name, tg.username)
+        if auth.startswith("tma "):
+            # Telegram ichidagi Mini App: initData imzosi
+            try:
+                init = safe_parse_webapp_init_data(BOT_TOKEN, auth[4:])
+            except ValueError:
+                raise ApiError(401, "bad_auth")
+            if time.time() - init.auth_date.timestamp() > INIT_DATA_MAX_AGE:
+                raise ApiError(401, "expired")
+            tg = init.user
+            if not tg:
+                raise ApiError(401, "bad_auth")
+            full_name = " ".join(x for x in (tg.first_name, tg.last_name) if x) or str(tg.id)
+            user, is_new = await db.upsert_user(tg.id, full_name, tg.username)
+            if is_new and user["role"] == "pending":
+                await services.notify_new_user(request.app[BOT_KEY], tg.id, full_name, tg.username)
+            lang = tg.language_code or "uz"
+        else:
+            # Oddiy brauzer: Telegram Login orqali olingan HttpOnly cookie sessiyasi.
+            # CSRF: cookie SameSite=Strict + boshqa saytdan yuborib bo'lmaydigan maxsus sarlavha.
+            if request.headers.get("X-Requested-With") != "fetch":
+                raise ApiError(401, "no_auth")
+            user = await webauth.session_user(request.cookies.get(webauth.COOKIE, ""))
+            if not user:
+                raise ApiError(401, "no_auth")
+            lang = (request.headers.get("Accept-Language") or "uz")[:2]
         request["user"] = user
-        request["lang"] = tg.language_code or "uz"
+        request["lang"] = lang
         if user["role"] in ("pending", "blocked") and request.path != "/api/me":
             raise ApiError(403, user["role"])
         return await handler(request)
@@ -224,6 +237,50 @@ async def auth_mw(request: web.Request, handler):
 
 
 routes = web.RouteTableDef()
+PUBLIC_API = {"/api/auth/config", "/api/auth/telegram"}
+
+
+# ---------------------------------------------------------------- brauzer orqali kirish
+def _is_https(request: web.Request) -> bool:
+    return request.secure or request.headers.get("X-Forwarded-Proto") == "https"
+
+
+@routes.get("/api/auth/config")
+async def auth_config(request: web.Request):
+    return ok({"bot_username": request.app.get(BOT_NAME_KEY, "")})
+
+
+@routes.post("/api/auth/telegram")
+async def auth_telegram(request: web.Request):
+    if request.headers.get("X-Requested-With") != "fetch":
+        raise ApiError(400, "bad_auth")
+    data = await body(request)
+    try:
+        # Imzo Telegram yuborgan barcha maydonlar bo'yicha hisoblanadi, shuning uchun hammasini uzatamiz
+        f = webauth.verify_login({k: v for k, v in data.items() if isinstance(v, (str, int)) and not isinstance(v, bool)})
+    except ValueError as ex:
+        raise ApiError(401, str(ex))
+    uid = int(f["id"])
+    full_name = " ".join(x for x in (f.get("first_name"), f.get("last_name")) if x) or str(uid)
+    user, is_new = await db.upsert_user(uid, full_name, f.get("username"))
+    if is_new and user["role"] == "pending":
+        await services.notify_new_user(request.app[BOT_KEY], uid, full_name, f.get("username"))
+    if user["role"] == "blocked":
+        raise ApiError(403, "blocked")
+    token = await webauth.create_session(uid, request.headers.get("User-Agent", ""))
+    resp = ok({"ok": True})
+    resp.set_cookie(webauth.COOKIE, token, max_age=webauth.SESSION_DAYS * 86400, path="/",
+                    httponly=True, secure=_is_https(request), samesite="Strict")
+    log.info("Web login: %s (%s)", uid, user["role"])
+    return resp
+
+
+@routes.post("/api/auth/logout")
+async def auth_logout(request: web.Request):
+    await webauth.delete_session(request.cookies.get(webauth.COOKIE, ""))
+    resp = ok()
+    resp.del_cookie(webauth.COOKIE, path="/")
+    return resp
 
 
 # ---------------------------------------------------------------- me
@@ -770,7 +827,12 @@ def build_app(bot: Bot) -> web.Application:
 
 
 async def start_web(bot: Bot) -> web.AppRunner:
-    runner = web.AppRunner(build_app(bot), access_log=None)
+    app = build_app(bot)
+    try:  # brauzerdagi "Telegram orqali kirish" tugmasi uchun bot nomi
+        app[BOT_NAME_KEY] = (await bot.get_me()).username or ""
+    except Exception:
+        log.warning("Bot username olinmadi — brauzer orqali kirish tugmasi ko'rinmaydi", exc_info=True)
+    runner = web.AppRunner(app, access_log=None)
     await runner.setup()
     site = web.TCPSite(runner, WEB_HOST, WEB_PORT)
     await site.start()

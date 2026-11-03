@@ -1,6 +1,8 @@
 (() => {
   "use strict";
   const tg = window.Telegram && window.Telegram.WebApp;
+  // Telegram ichida: initData bilan. Oddiy brauzerda: Telegram Login + HttpOnly cookie sessiya.
+  const inTg = !!(tg && tg.initData);
   const app = document.getElementById("app");
 
   // ------------------------------------------------------------ storage
@@ -17,6 +19,7 @@
     list: null,
     acts: {},
     renderId: 0,
+    hops: 0,
     pendingCount: 0,
   };
 
@@ -174,8 +177,9 @@
 
   // ------------------------------------------------------------ api
   class ApiErr extends Error { constructor(code, msg, status) { super(code); this.code = code; this.msg = msg; this.status = status; } }
+  const authHeaders = () => (inTg ? { Authorization: "tma " + tg.initData } : { "X-Requested-With": "fetch" });
   async function api(method, path, body, isForm) {
-    const headers = { Authorization: "tma " + (tg ? tg.initData : "") };
+    const headers = authHeaders();
     let payload;
     if (body !== undefined) {
       if (isForm) payload = body;
@@ -186,7 +190,11 @@
     catch (_) { throw new ApiErr("network"); }
     let data = null;
     try { data = await res.json(); } catch (_) { /* non-json */ }
-    if (!res.ok) throw new ApiErr((data && data.error) || "server", data && data.message, res.status);
+    if (!res.ok) {
+      // Brauzerda sessiya tugagan bo'lsa — kirish sahifasiga
+      if (res.status === 401 && !inTg && !path.startsWith("/api/auth/")) { showLogin(); throw new ApiErr("login"); }
+      throw new ApiErr((data && data.error) || "server", data && data.message, res.status);
+    }
     return data;
   }
   function errText(e) {
@@ -276,16 +284,29 @@
     for (const [re, fn, top] of routes) {
       const m = h.match(re);
       if (m) {
-        if (tg && tg.BackButton) { top ? tg.BackButton.hide() : tg.BackButton.show(); }
+        if (inTg && tg.BackButton) { top ? tg.BackButton.hide() : tg.BackButton.show(); }
+        S.hops++;
         window.scrollTo(0, 0);
         try { await fn(id, ...m.slice(1)); }
         catch (e) { if (id === S.renderId) renderError(e); }
+        if (!inTg && !top && id === S.renderId) webBack();
         return;
       }
     }
     location.replace("#/home");
   }
   const alive = (id) => id === S.renderId;
+  // Brauzerda Telegram'ning "Orqaga" tugmasi yo'q — sarlavhaga o'zimiznikini qo'yamiz
+  function webBack() {
+    const tb = app.querySelector(".topbar");
+    if (!tb || tb.querySelector(".wback")) return;
+    const b = document.createElement("button");
+    b.className = "btn btn-ghost btn-sm wback";
+    b.setAttribute("aria-label", t("back"));
+    b.innerHTML = ic("chev", 'style="transform:rotate(180deg)"');
+    b.onclick = () => { if (S.hops > 1) history.back(); else location.hash = "#/home"; };
+    tb.prepend(b);
+  }
   function renderError(e) {
     if (e && e.code === "pending" || e && e.code === "blocked") return boot();
     app.innerHTML = `<div class="center-screen"><div><div class="ill bg-danger">${ic("alert")}</div><h2>${esc(errText(e))}</h2><button class="btn btn-ghost mt16" data-act="retry">${ic("refresh")} ${t("back")}</button></div></div>`;
@@ -529,7 +550,7 @@
 
     document.querySelectorAll("[data-img]").forEach(async (img) => {
       try {
-        const res = await fetch(img.dataset.img, { headers: { Authorization: "tma " + tg.initData } });
+        const res = await fetch(img.dataset.img, { headers: authHeaders() });
         if (res.ok) img.src = URL.createObjectURL(await res.blob());
       } catch (_) { /* ignore */ }
     });
@@ -801,9 +822,15 @@
         ${menuItem("#/admin/currencies", "coins", "bg-warning", t("currencies"), S.me.currencies.join(", "))}
         ${menuItem("#/admin/audit", "clock", "bg-danger", t("audit"), t("audit_sub"))}
       </div></div>` : ""}
+      ${inTg ? "" : `<div class="section"><div class="card menu"><button class="mi" data-act="logout"><span class="ic bg-danger" style="display:grid;place-items:center">${ic("x")}</span><span class="tx"><b>${t("logout")}</b><small>${t("logout_sub")}</small></span></button></div></div>`}
       <p class="muted" style="text-align:center;font-size:12px;margin-top:28px">${t("app_name")} · v1.0</p>
     </div>${tabbar("more")}`;
     document.getElementById("lang").onclick = (e) => { const b = e.target.closest("[data-l]"); if (!b) return; haptic("select"); S.lang = b.dataset.l; store.set("lang", S.lang); document.documentElement.lang = S.lang; route(); };
+    S.acts.logout = async () => {
+      if (!(await confirmSheet(t("logout_q"), t("logout")))) return;
+      try { await api("POST", "/api/auth/logout"); } catch (_) { /* sessiya allaqachon tugagan */ }
+      showLogin();
+    };
     document.getElementById("theme").onclick = (e) => { const b = e.target.closest("[data-m]"); if (!b) return; haptic("select"); S.themePref = b.dataset.m; store.set("theme", S.themePref); applyTheme(); route(); };
   }
   const menuItem = (href, icon, cls, title, sub) => `<button class="mi" data-go="${href}"><span class="ic ${cls}" style="display:grid;place-items:center">${ic(icon)}</span><span class="tx"><b>${esc(title)}</b><small>${esc(sub || "")}</small></span>${ic("chev", 'class="chev"')}</button>`;
@@ -1058,21 +1085,60 @@
   function centerScreen(icon, cls, title, text) {
     app.innerHTML = `<div class="center-screen"><div><div class="ill ${cls}">${ic(icon)}</div><h2>${esc(title)}</h2><p>${esc(text)}</p></div></div>`;
   }
+  // ------------------------------------------------------------ brauzer: Telegram orqali kirish
+  async function showLogin(errCode) {
+    window.removeEventListener("hashchange", route);
+    S.renderId++;
+    S.me = null;
+    closeSheet();
+    app.innerHTML = `<div class="center-screen"><div class="login">
+      <div class="ill bg-primary">${ic("telegram")}</div>
+      <h2>${t("login_t")}</h2><p>${t("login_hint")}</p>
+      <div id="tgw" class="tgw"><div class="spinner"></div></div>
+      ${errCode ? `<p class="err-msg" style="display:block">${esc(errText({ code: errCode }))}</p>` : ""}
+      <p id="tgopen" class="muted" style="font-size:13px;margin-top:18px"></p>
+    </div></div>`;
+    let cfg = {};
+    try { cfg = await api("GET", "/api/auth/config"); } catch (_) { /* tarmoq */ }
+    const box = document.getElementById("tgw");
+    if (!box) return;
+    if (!cfg.bot_username) { box.innerHTML = `<p class="err-msg" style="display:block">${t("login_unavailable")}</p>`; return; }
+    document.getElementById("tgopen").innerHTML = `${t("login_or")} <a href="https://t.me/${encodeURIComponent(cfg.bot_username)}" target="_blank" rel="noopener">@${esc(cfg.bot_username)}</a>`;
+    window.__tgAuth = async (user) => {
+      box.innerHTML = '<div class="spinner"></div>';
+      try { await api("POST", "/api/auth/telegram", user); boot(); }
+      catch (e) { showLogin(e.code || "bad_auth"); }
+    };
+    const s = document.createElement("script");
+    s.async = true;
+    s.src = "https://telegram.org/js/telegram-widget.js?22";
+    s.setAttribute("data-telegram-login", cfg.bot_username);
+    s.setAttribute("data-size", "large");
+    s.setAttribute("data-radius", "12");
+    s.setAttribute("data-userpic", "false");
+    s.setAttribute("data-lang", S.lang);
+    s.setAttribute("data-request-access", "write");
+    s.setAttribute("data-onauth", "__tgAuth(user)");
+    s.onload = () => { const sp = box.querySelector(".spinner"); if (sp) sp.remove(); };
+    s.onerror = () => { box.innerHTML = `<p class="err-msg" style="display:block">${t("login_unavailable")}</p>`; };
+    box.appendChild(s);
+  }
+
   async function boot() {
     document.documentElement.lang = S.lang;
     applyTheme();
-    if (!tg || !tg.initData) { centerScreen("telegram", "bg-primary", t("open_in_tg"), t("open_in_tg_hint")); return; }
     app.innerHTML = '<div class="spinner" style="margin-top:40vh"></div>';
     try { S.me = await api("GET", "/api/me"); }
-    catch (e) { centerScreen("alert", "bg-danger", errText(e), ""); return; }
+    catch (e) { if (e.code !== "login") centerScreen("alert", "bg-danger", errText(e), ""); return; }
     const role = S.me.user.role;
     if (role === "pending") { centerScreen("lock", "bg-warning", t("wait_access"), t("wait_access_hint")); return; }
     if (role === "blocked") { centerScreen("ban", "bg-danger", t("blocked_t"), t("blocked_hint")); return; }
+    window.removeEventListener("hashchange", route);
     window.addEventListener("hashchange", route);
     route();
   }
 
-  if (tg) {
+  if (inTg) {
     tg.ready();
     tg.expand();
     try { tg.disableVerticalSwipes && tg.disableVerticalSwipes(); } catch (_) { /* old */ }

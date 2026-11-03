@@ -73,6 +73,16 @@ CREATE TABLE IF NOT EXISTS daily_rates(
     PRIMARY KEY(day, code)
 );
 CREATE INDEX IF NOT EXISTS ix_rates_code_day ON daily_rates(code, day);
+-- Brauzer sessiyalari (Telegram Login Widget orqali kirish). Token emas, uning SHA256 xeshi saqlanadi.
+CREATE TABLE IF NOT EXISTS web_sessions(
+    token_hash TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    last_seen INTEGER NOT NULL,
+    user_agent TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS ix_ws_user ON web_sessions(user_id);
 """
 
 
