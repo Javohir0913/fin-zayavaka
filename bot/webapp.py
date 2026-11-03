@@ -12,9 +12,10 @@ from aiogram.utils.web_app import safe_parse_webapp_init_data
 from aiohttp import web
 
 from . import audit, db, reports, services
+from . import rates as rates_mod
 from .config import BASE_CURRENCY, BOT_TOKEN, WEB_HOST, WEB_PORT
 
-from .rates import get_rates, to_base
+from .rates import get_rates, req_base
 from .render import fmt_field_value
 from .utils import (FIELD_TYPES, PERMS, allowed_roles, can, e, fmt_amount, fmt_date,
                     role_change_error, today)
@@ -85,6 +86,9 @@ def serialize(r: dict, user: dict, fields_by_id: dict, rates: dict | None = None
         "decider_name": r.get("decider_name"), "decided_at": r["decided_at"], "reject_reason": r["reject_reason"],
         "created_at": r["created_at"], "updated_at": r["updated_at"],
         "extra": public_extra(r["extra"], fields_by_id),
+        # Zayavka kiritilgan kun kursi (qo'lda bo'lsa — kim qo'ygani)
+        "rate": r.get("rate"), "rate_day": r.get("rate_used_day"), "rate_manual": bool(r.get("rate_manual")),
+        "rate_source": r.get("rate_source"), "rate_set_by": r.get("rate_set_by"), "rate_set_at": r.get("rate_set_at"),
         "can": {
             "edit": can_edit(user, r),
             "decide": r["status"] == "pending" and can(user, "decide"),
@@ -93,7 +97,7 @@ def serialize(r: dict, user: dict, fields_by_id: dict, rates: dict | None = None
         },
     }
     if rates is not None:
-        v = to_base(r["amount"], r["currency"], rates)
+        v = req_base(r, rates)
         out["base_amount"] = round(v, 2) if v is not None else None
     return out
 
@@ -493,7 +497,7 @@ async def my_summary(request: web.Request):
     rates, _ = await get_rates()
     approved = await db.list_requests(user["id"], "approved", 0, 1000)
     t = today().isoformat()[:7]
-    month_sum = sum(to_base(r["amount"], r["currency"], rates) or 0 for r in approved if r["created_at"][:7] == t)
+    month_sum = sum(req_base(r, rates) or 0 for r in approved if r["created_at"][:7] == t)
     return ok({"counts": counts, "approved_month": round(month_sum, 2), "base": BASE_CURRENCY})
 
 
@@ -633,6 +637,73 @@ async def admin_toggle_currency(request: web.Request):
         raise ApiError(400, "last_currency")
     await services.toggle_currency(request["user"], code)
     return ok({"items": await db.list_currencies(active_only=False)})
+
+
+# ---------------------------------------------------------------- kunlik kurslar
+def _day_param(raw: str | None) -> str:
+    try:
+        d = date.fromisoformat(str(raw or today().isoformat())[:10])
+    except ValueError:
+        raise ApiError(400, "bad_date")
+    if d > today():
+        raise ApiError(400, "future_date")
+    return d.isoformat()
+
+
+@routes.get("/api/rates/today")
+async def rates_today(request: web.Request):
+    """Zayavka formasi uchun (faqat o'qish): bugungi yoki tahrirlanayotgan zayavka kuni kurslari.
+    Har kim ko'radi — valyuta tanlaganda kurs va kim qo'ygani ko'rsatiladi."""
+    need(request["user"], "create")
+    day = _day_param(request.query.get("day"))
+    return ok({"day": day, "today": today().isoformat(), "items": await rates_mod.day_rates(day)})
+
+
+@routes.get("/api/rates")
+async def rates_day(request: web.Request):
+    need(request["user"], "rates_view")
+    day = _day_param(request.query.get("day"))
+    return ok({"day": day, "today": today().isoformat(), "items": await rates_mod.day_rates(day),
+               "can_edit": can(request["user"], "rates_edit")})
+
+
+@routes.get("/api/rates/history")
+async def rates_history(request: web.Request):
+    need(request["user"], "rates_view")
+    code = str(request.query.get("code") or "USD").upper()[:3]
+    return ok({"code": code, "items": await rates_mod.history(code, 60)})
+
+
+async def _rate_target(request: web.Request) -> tuple[str, str]:
+    need(request["user"], "rates_edit")
+    day = _day_param(request.match_info["day"])
+    code = request.match_info["code"].upper()
+    if code not in {c["code"] for c in await db.list_currencies(active_only=False)} or code == "UZS":
+        raise ApiError(400, "bad_currency")
+    return day, code
+
+
+@routes.put("/api/rates/{day}/{code}")
+async def rates_set(request: web.Request):
+    """Qo'lda kurs (tasdiqlovchi, admin, super admin). Qulflanadi — API ustidan yozmaydi."""
+    day, code = await _rate_target(request)
+    try:
+        rate = round(float((await body(request)).get("rate")), 6)
+    except (TypeError, ValueError):
+        raise ApiError(400, "bad_rate")
+    if not 0 < rate < 1e9:
+        raise ApiError(400, "bad_rate")
+    await rates_mod.set_manual(request["user"], day, code, rate)
+    return ok({"day": day, "items": await rates_mod.day_rates(day)})
+
+
+@routes.post("/api/rates/{day}/{code}/auto")
+async def rates_unlock(request: web.Request):
+    """Qo'lda kursni bekor qilib, avtomatik yangilanishga qaytaradi."""
+    day, code = await _rate_target(request)
+    if not await rates_mod.set_auto(request["user"], day, code):
+        raise ApiError(409, "no_change")
+    return ok({"day": day, "items": await rates_mod.day_rates(day)})
 
 
 # ---------------------------------------------------------------- audit log

@@ -15,7 +15,7 @@ log = logging.getLogger(__name__)
 
 RETENTION_DAYS = 90
 
-ENTITIES = ("request", "user", "field", "currency", "audit")
+ENTITIES = ("request", "user", "field", "currency", "rate", "audit")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS audit_log(

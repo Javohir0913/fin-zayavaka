@@ -31,6 +31,8 @@ PERMS = {
     "analytics": {"approver", "viewer", "admin", "superadmin"},
     "admin": {"admin", "superadmin"},
     "manage_admins": {"superadmin"},   # admin rolini berish/olish
+    "rates_view": {"approver", "viewer", "admin", "superadmin"},   # kunlik kurslar sahifasi
+    "rates_edit": {"approver", "admin", "superadmin"},             # kursni qo'lda o'zgartirish
 }
 ADMIN_ROLES = ["superadmin", "admin"]
 

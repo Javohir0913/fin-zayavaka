@@ -431,3 +431,22 @@ textarea.input { min-height: 84px; resize: vertical; }
 .chg .old { color: var(--danger); text-decoration: line-through; text-decoration-thickness: 1px; }
 .chg .new { color: var(--success); font-weight: 600; }
 .aud-a { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12px; }
+
+/* ------------------------------------------------ valyuta kurslari */
+.rate-hint { margin-top: 10px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--border); font-size: 13.5px; display: flex; flex-direction: column; gap: 3px; }
+.rate-hint svg { display: inline; vertical-align: -3px; margin-right: 6px; color: var(--warning); }
+.rh-main { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.rh-eq { color: var(--primary); font-weight: 700; }
+.rh-meta { color: var(--muted); font-size: 12.5px; font-weight: 600; }
+.rate-manual { color: var(--warning); font-weight: 700; display: inline-flex; align-items: center; gap: 3px; }
+.rate-manual svg { display: inline; }
+.day-nav { display: flex; align-items: center; gap: 8px; padding: 8px; }
+.day-nav .input { flex: 1; text-align: center; padding: 10px; }
+.day-nav .btn { font-size: 22px; line-height: 1; padding: 6px 14px; }
+.rate-card { display: flex; gap: 12px; align-items: center; padding: 14px; }
+.rate-card.is-manual { border-color: var(--warning); }
+.rate-card .cur { width: 46px; height: 46px; border-radius: 14px; display: grid; place-items: center; font-weight: 750; font-size: 12px; flex: none; }
+.rate-card .mid { flex: 1; min-width: 0; }
+.rate-card .rv { font-size: 20px; font-weight: 750; letter-spacing: -.01em; }
+.rate-card .rv small { font-size: 12px; color: var(--muted); font-weight: 600; }
+.rate-card .m { font-size: 12.5px; color: var(--muted); margin-top: 2px; }

@@ -13,7 +13,7 @@ from openpyxl.utils import get_column_letter  # noqa: E402
 
 from . import db  # noqa: E402
 from .config import BASE_CURRENCY  # noqa: E402
-from .rates import get_rates, to_base  # noqa: E402
+from .rates import get_rates, req_base  # noqa: E402
 from .render import field_plain, text_line  # noqa: E402
 from .utils import (STATUS, e, fmt_amount, fmt_date, parse_dt, short, today)  # noqa: E402
 
@@ -74,7 +74,7 @@ class Stats:
             st = r["status"]
             self.count[st] += 1
             self.by_cur[r["currency"]][st] += r["amount"]
-            v = to_base(r["amount"], r["currency"], rates)
+            v = req_base(r, rates)
             if v is None:
                 self.missing_rates.add(r["currency"])
             else:
@@ -160,7 +160,7 @@ async def dashboard_text(period: str) -> str:
     t = today()
     overdue = await db.overdue_pending(t.isoformat())
     week = await db.requests_due_between(t.isoformat(), (t + timedelta(days=7)).isoformat())
-    week_base = sum(to_base(r["amount"], r["currency"], rates) or 0 for r in week)
+    week_base = sum(req_base(r, rates) or 0 for r in week)
     lines += ["", "🔔 <b>Hozirgi holat</b>"]
     lines.append(f"📅 Keyingi 7 kunda kerak: <b>{len(week)}</b> ta (~{fmt_amount(round(week_base))} {BASE_CURRENCY})")
     lines.append(f"⚠️ Muddati o'tgan, hali kutilmoqda: <b>{len(overdue)}</b> ta")
@@ -277,22 +277,25 @@ async def excel(period: str) -> bytes:
     wb = Workbook()
     ws = wb.active
     ws.title = "Zayavkalar"
-    headers = ["ID", "Yaratilgan", "Muallif", "Maqsad", "Summa", "Valyuta", f"{BASE_CURRENCY} ekv.",
+    headers = ["ID", "Yaratilgan", "Muallif", "Maqsad", "Summa", "Valyuta", "Kurs", "Kurs sanasi", "Kurs manbasi",
+               f"{BASE_CURRENCY} ekv.",
                "Kerakli sana", "Holat", "Ko'rib chiqdi", "Qaror vaqti", "Rad sababi", "Izoh"] + [f["name"] for f in fields]
     ws.append(headers)
     for r in rows:
-        base = to_base(r["amount"], r["currency"], rates)
+        base = req_base(r, rates)
         ws.append([
             r["id"], r["created_at"], r.get("author_name") or "", r["title"], r["amount"], r["currency"],
+            r.get("rate"), fmt_date(r.get("rate_used_day")) if r.get("rate_used_day") else "",
+            ("Qo'lda: " + (r.get("rate_set_by") or "")) if r.get("rate_manual") else (r.get("rate_source") or ""),
             round(base, 2) if base is not None else None, fmt_date(r["needed_date"]), STATUS[r["status"]][2:],
             r.get("decider_name") or "", r["decided_at"] or "", r["reject_reason"], r["comment"],
         ] + [field_plain(f, r["extra"].get(str(f["id"]))) for f in fields])
-    _style(ws, money_cols=(5, 7))
+    _style(ws, money_cols=(5, 7, 10))
 
     ws2 = wb.create_sheet("Xulosa")
     s = Stats(rows, rates)
     ws2.append(["Davr", _period_label(period)])
-    ws2.append(["Kurs sanasi (CBU)", rate_date or "—"])
+    ws2.append(["Kurslar", "Har bir zayavka o'zi kiritilgan kun kursi bilan (Zayavkalar varag'ida)"])
     ws2.append([])
     ws2.append(["Valyuta"] + [STATUS[st][2:] for st in STATUS_ORDER])
     for cur, d in sorted(s.by_cur.items()):
@@ -335,7 +338,7 @@ async def short_report() -> str:
     month_rows = await db.requests_created_between(t.replace(day=1).isoformat(), t.isoformat())
     st, sm = Stats(today_rows, rates), Stats(month_rows, rates)
     pending = await db.all_pending()
-    pend_base = sum(to_base(r["amount"], r["currency"], rates) or 0 for r in pending)
+    pend_base = sum(req_base(r, rates) or 0 for r in pending)
     overdue = [r for r in pending if r["needed_date"] < t.isoformat()]
     soon = await db.requests_due_between(t.isoformat(), (t + timedelta(days=1)).isoformat())
 
@@ -418,6 +421,6 @@ async def dashboard_data(period: str) -> dict:
         "series": series,
         "breakdowns": breakdowns,
         "upcoming_count": len(week),
-        "upcoming_sum": round(sum(to_base(r["amount"], r["currency"], rates) or 0 for r in week), 2),
+        "upcoming_sum": round(sum(req_base(r, rates) or 0 for r in week), 2),
         "overdue_count": len(overdue),
     }

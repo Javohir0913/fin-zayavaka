@@ -60,6 +60,9 @@ def render_card(req: dict, fields: list[dict]) -> str:
     ]
     lines += render_body(req["title"], req["amount"], req["currency"], req["needed_date"],
                          req["comment"], req["extra"], fields, req["status"])
+    rl = rate_line(req)
+    if rl:
+        lines.insert(lines.index(next(x for x in lines if x.startswith("💰"))) + 1, rl)
     lines.append("")
     lines.append(f"🕒 Yaratildi: {fmt_dt(req['created_at'])}")
     if req["status"] == "approved":
@@ -88,3 +91,13 @@ def text_line(req: dict, with_author: bool = True) -> str:
     if with_author:
         s += f" <i>({e(short(req.get('author_name') or '', 20))})</i>"
     return s
+
+
+def rate_line(req: dict) -> str:
+    """'💱 Kurs: 1 USD = 11 941,65 so'm (03.11.2026) · ✋ qo'lda: Ism' — UZS bo'lmagan zayavkalar uchun."""
+    if req.get("currency") == "UZS" or not req.get("rate"):
+        return ""
+    who = f"✋ qo'lda: {e(req.get('rate_set_by') or '—')}" if req.get("rate_manual") else f"avto · {e(req.get('rate_source') or '')}"
+    base = req["amount"] * req["rate"]
+    return (f"💱 Kurs: 1 {e(req['currency'])} = {fmt_amount(req['rate'])} so'm ({fmt_date(req.get('rate_used_day'))}) · {who}\n"
+            f"     ≈ <b>{fmt_amount(round(base))} UZS</b>")

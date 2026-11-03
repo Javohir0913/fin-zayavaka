@@ -266,6 +266,7 @@
     [/^#\/admin\/fields$/, screenFields, false],
     [/^#\/admin\/currencies$/, screenCurrencies, false],
     [/^#\/admin\/audit$/, screenAudit, false],
+    [/^#\/rates$/, screenRates, false],
   ];
   async function route() {
     closeSheet();
@@ -508,6 +509,7 @@
       ${sec.length ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">${sec.join("")}</div>` : ""}
       ${r.status === "rejected" && r.reject_reason ? `<div class="note bg-danger"><b>${t("reason")}:</b> ${esc(r.reject_reason)}</div>` : ""}
       <div class="card rows mt12">
+        ${r.currency !== S.me.base && r.rate ? row(t("rate"), `<span class="num">1 ${esc(r.currency)} = ${fmt(r.rate, 2)} ${esc(S.me.base)}</span><div class="muted" style="font-size:12.5px;font-weight:600">${rateWho(r.rate_manual, r.rate_set_by, r.rate_source)} · ${fmtDate(r.rate_day)}</div>`) : ""}
         ${row(t("needed_date"), `${fmtDate(r.needed_date)}${due ? `<div style="font-size:12.5px;font-weight:600" class="${overdue ? "due-warn" : "muted"}">${esc(due)}</div>` : ""}`)}
         ${row(t("author"), esc(r.author_name || "—") + (r.author_username ? `<div class="muted" style="font-size:12.5px">@${esc(r.author_username)}</div>` : ""))}
         ${row(t("created"), fmtDT(r.created_at))}
@@ -562,6 +564,15 @@
       busy(b, false);
     };
   }
+  function parseAmt(v) {
+    v = String(v || "").replace(/\s/g, "");
+    v = S.lang === "en" ? v.replace(/,/g, "") : v.replace(",", ".");
+    return parseFloat(v);
+  }
+  function rateWho(manual, who, source) {
+    return manual ? `<span class="rate-manual">${ic("lock", 'width="12" height="12"')} ${t("rate_manual_by")}: ${esc(who || "—")}</span>`
+      : `<span>${t("rate_auto")}${source ? " · " + esc(source) : ""}</span>`;
+  }
   const row = (k, v) => `<div class="rowi"><div class="k">${esc(k)}</div><div class="v">${v}</div></div>`;
   function fieldValue(f, v) {
     if (v == null || v === "") return "—";
@@ -588,6 +599,11 @@
       if (!alive(id)) return;
       S.me = me; fields = me.fields;
     }
+    // Zayavka kuni kurslari: yangi zayavka — bugun; tahrir — zayavka kiritilgan kun
+    const rateDay = editing ? (r.rate_day || r.created_at.slice(0, 10)) : null;
+    const rd = await api("GET", "/api/rates/today" + (rateDay ? "?day=" + rateDay : "")).catch(() => ({ items: [] }));
+    if (!alive(id)) return;
+    const rateMap = Object.fromEntries((rd.items || []).map((x) => [x.code, x]));
     const F = {
       title: r ? r.title : "",
       amount: r ? r.amount : "",
@@ -606,6 +622,7 @@
         <div class="field"><label class="l" for="f_amount">${t("amount")}</label>
           <div class="amount-wrap"><input class="input num" id="f_amount" inputmode="decimal" autocomplete="off" placeholder="0" value="${F.amount !== "" ? esc(fmt(F.amount)) : ""}"><span class="cc" id="ccv">${esc(F.currency)}</span></div>
           <div class="opts" id="curs">${curs.map((c) => `<button type="button" class="opt ${c === F.currency ? "on" : ""}" data-c="${esc(c)}">${esc(c)}</button>`).join("")}</div>
+          <div class="rate-hint" id="rhint" hidden></div>
           <div class="err-msg" id="e_amount" hidden></div></div>
         <div class="field"><label class="l" for="f_title">${t("title")}</label>
           <input class="input" id="f_title" maxlength="500" placeholder="${esc(t("title_ph"))}" value="${esc(F.title)}"><div class="err-msg" id="e_title" hidden></div></div>
@@ -627,8 +644,21 @@
       const grouped = (i || "").replace(/^0+(?=\d)/, "").replace(/\B(?=(\d{3})+(?!\d))/g, S.lang === "en" ? "," : " ");
       e.target.value = dec !== undefined ? grouped + "." + dec.slice(0, 2) : grouped;
       showErr("amount", "");
+      rateHint();
     });
-    $("curs").onclick = (e) => { const b = e.target.closest("[data-c]"); if (!b) return; haptic("select"); F.currency = b.dataset.c; $("ccv").textContent = F.currency; $("curs").querySelectorAll(".opt").forEach((x) => x.classList.toggle("on", x === b)); };
+    $("curs").onclick = (e) => { const b = e.target.closest("[data-c]"); if (!b) return; haptic("select"); F.currency = b.dataset.c; $("ccv").textContent = F.currency; $("curs").querySelectorAll(".opt").forEach((x) => x.classList.toggle("on", x === b)); rateHint(); };
+    function rateHint() {
+      const el = $("rhint");
+      if (F.currency === S.me.base) { el.hidden = true; return; }
+      el.hidden = false;
+      const x = rateMap[F.currency];
+      if (!x || !x.rate) { el.innerHTML = `${ic("alert", 'width="15" height="15"')}<span>${t("rate_missing")}</span>`; return; }
+      const amt = parseAmt($("f_amount").value);
+      const dayTxt = rateDay ? fmtDate(x.day) : (x.carried ? fmtDate(x.day) : t("today_l"));
+      el.innerHTML = `<div class="rh-main"><span class="num">1 ${esc(F.currency)} = <b>${fmt(x.rate, 2)}</b> ${esc(S.me.base)}</span>${amt > 0 ? `<span class="num rh-eq">≈ ${fmt(Math.round(amt * x.rate))} ${esc(S.me.base)}</span>` : ""}</div>
+        <div class="rh-meta">${rateWho(x.manual, x.set_by_name, x.source)} · ${esc(dayTxt)}</div>`;
+    }
+    rateHint();
     $("qd").onclick = (e) => { const b = e.target.closest("[data-d]"); if (!b) return; haptic("select"); $("f_date").value = b.dataset.d; markQuick(); showErr("date", ""); };
     $("f_date").onchange = () => { markQuick(); showErr("date", ""); };
     $("f_title").oninput = () => showErr("title", "");
@@ -764,6 +794,7 @@
         <div class="seg" id="lang">${[["uz", "O'zbekcha"], ["ru", "Русский"], ["en", "English"]].map(([c, n]) => `<button class="${S.lang === c ? "on" : ""}" data-l="${c}">${n}</button>`).join("")}</div></div>
       <div class="section"><div class="section-h"><h2>${t("theme")}</h2></div>
         <div class="seg" id="theme">${["auto", "light", "dark"].map((m) => `<button class="${S.themePref === m ? "on" : ""}" data-m="${m}">${t("th_" + m)}</button>`).join("")}</div></div>
+      ${can("rates_view") ? `<div class="section"><div class="card menu">${menuItem("#/rates", "coins", "bg-warning", t("rates"), t(can("rates_edit") ? "rates_sub_edit" : "rates_sub"))}</div></div>` : ""}
       ${can("admin") ? `<div class="section"><div class="section-h"><h2>${t("admin")}</h2></div><div class="card menu">
         ${menuItem("#/admin/users", "users", "bg-primary", t("users"), t("change_role"))}
         ${menuItem("#/admin/fields", "sliders", "bg-success", t("fields"), t("fields_hint"))}
@@ -866,9 +897,9 @@
     S.audit = S.audit || { entity: "", deleted: "N", q: "" };
     const A = S.audit;
     if (!isSuper) A.deleted = "N";
-    const ENT = [["", "ent_all"], ["request", "ent_request"], ["user", "ent_user"], ["field", "ent_field"], ["currency", "ent_currency"], ["audit", "ent_audit"]];
-    const ENT_ICON = { request: "file", user: "user", field: "sliders", currency: "coins", audit: "undo" };
-    const ENT_CLS = { request: "bg-primary", user: "bg-warning", field: "bg-success", currency: "bg-warning", audit: "bg-danger" };
+    const ENT = [["", "ent_all"], ["request", "ent_request"], ["user", "ent_user"], ["field", "ent_field"], ["currency", "ent_currency"], ["rate", "ent_rate"], ["audit", "ent_audit"]];
+    const ENT_ICON = { request: "file", user: "user", field: "sliders", currency: "coins", rate: "trend", audit: "undo" };
+    const ENT_CLS = { request: "bg-primary", user: "bg-warning", field: "bg-success", currency: "bg-warning", rate: "bg-primary", audit: "bg-danger" };
     app.innerHTML = `<div class="screen no-tabs">
       <div class="topbar"><div><h1>${t("audit")}</h1><div class="sub" id="ahint"></div></div></div>
       ${isSuper ? `<div class="seg" id="adel">${[["N", "a_active"], ["Y", "a_deleted"], ["all", "a_all"]].map(([v, k]) => `<button class="${A.deleted === v ? "on" : ""}" data-v="${v}">${t(k)}</button>`).join("")}</div>` : ""}
@@ -920,6 +951,79 @@
       } catch (er) { busy(b, false); toast(errText(er), true); }
     };
     await load(true);
+  }
+
+  // ------------------------------------------------------------ KURSLAR (kunlik)
+  async function screenRates(id) {
+    S.ratesUi = S.ratesUi || { day: todayIso(), code: "USD" };
+    const R = S.ratesUi;
+    if (R.day > todayIso()) R.day = todayIso();
+    app.innerHTML = `<div class="screen no-tabs"><div class="topbar"><div><h1>${t("rates")}</h1><div class="sub">${t("rates_hint")}</div></div></div>
+      <div class="day-nav card"><button class="btn btn-ghost btn-sm" data-act="dprev" aria-label="prev">‹</button>
+        <input class="input" type="date" id="rday" max="${todayIso()}" value="${esc(R.day)}">
+        <button class="btn btn-ghost btn-sm" data-act="dnext" aria-label="next">›</button></div>
+      <div class="list mt12" id="rlist">${skeleton(3)}</div>
+      <div class="section"><div class="section-h"><h2>${t("rates_history")}</h2></div>
+        <div class="chips" id="rcodes"></div><div class="card mt12" id="rhist">${skeleton(2)}</div></div>
+    </div>`;
+    let data = null;
+    let seq = 0;
+    async function loadDay() {
+      const my = ++seq;
+      const d = await api("GET", "/api/rates?day=" + R.day);
+      if (!alive(id) || my !== seq) return;
+      data = d;
+      document.getElementById("rday").value = data.day;
+      document.getElementById("rlist").innerHTML = data.items.length ? data.items.map((x) => `
+        <div class="card rate-card ${x.manual ? "is-manual" : ""}">
+          <div class="cur bg-warning">${esc(x.code)}</div>
+          <div class="mid"><div class="rv num">${x.rate ? fmt(x.rate, 2) : "—"} <small>${esc(S.me.base)}</small></div>
+            <div class="m">${x.rate ? rateWho(x.manual, x.set_by_name, x.source) : t("rate_missing")}${x.carried ? ` · <span class="due-warn">${t("rate_carried", { d: fmtDate(x.day) })}</span>` : ""}${x.set_at && !x.carried ? ` · ${fmtDT(x.set_at)}` : ""}</div></div>
+          ${data.can_edit ? `<button class="btn btn-ghost btn-sm" data-act="redit" data-c="${esc(x.code)}" aria-label="${t("edit")}">${ic("edit")}</button>` : ""}
+        </div>`).join("") : `<div class="empty card"><b>${t("rate_missing")}</b></div>`;
+      const codes = data.items.map((x) => x.code);
+      if (!codes.includes(R.code) && codes.length) R.code = codes[0];
+      document.getElementById("rcodes").innerHTML = codes.map((c) => `<button class="chip ${c === R.code ? "on" : ""}" data-code="${esc(c)}">${esc(c)}</button>`).join("");
+    }
+    async function loadHist() {
+      const h = await api("GET", "/api/rates/history?code=" + R.code);
+      if (!alive(id)) return;
+      document.getElementById("rhist").innerHTML = h.items.length ? `<div class="menu">${h.items.map((x) => `
+        <button class="mi" data-day="${esc(x.day)}"><span class="tx"><b class="num">${fmtDate(x.day)}</b><small>${x.manual ? rateWho(1, x.set_by_name) : rateWho(0, "", x.source)}</small></span>
+        <span class="end num"><b>${fmt(x.rate, 2)}</b></span></button>`).join("")}</div>` : `<div class="empty"><b>${t("rate_missing")}</b></div>`;
+    }
+    const reload = () => loadDay().catch((e) => toast(errText(e), true));
+    const shift = (n) => { const d = addDays(R.day, n); if (d > todayIso()) return; haptic("select"); R.day = d; reload(); };
+    S.acts.dprev = () => shift(-1);
+    S.acts.dnext = () => shift(1);
+    document.getElementById("rday").onchange = (e) => { if (!e.target.value) return; R.day = e.target.value > todayIso() ? todayIso() : e.target.value; reload(); };
+    document.getElementById("rcodes").onclick = (e) => { const b = e.target.closest("[data-code]"); if (!b) return; haptic("select"); R.code = b.dataset.code; document.querySelectorAll("#rcodes .chip").forEach((x) => x.classList.toggle("on", x === b)); loadHist().catch((er) => toast(errText(er), true)); };
+    document.getElementById("rhist").onclick = (e) => { const b = e.target.closest("[data-day]"); if (!b) return; R.day = b.dataset.day; window.scrollTo({ top: 0, behavior: "smooth" }); reload(); };
+    S.acts.redit = (b) => {
+      const x = data.items.find((i) => i.code === b.dataset.c);
+      sheet(`<h3>1 ${esc(x.code)} = ? ${esc(S.me.base)}</h3><p>${fmtDate(data.day)} · ${x.rate ? rateWho(x.manual, x.set_by_name, x.source) : t("rate_missing")}</p>
+        <input class="input num" id="rnew" inputmode="decimal" value="${x.rate ? esc(String(x.rate)) : ""}" style="font-size:22px;font-weight:750">
+        <div class="note bg-warning mt12">${ic("lock", 'width="14" height="14" style="display:inline;vertical-align:-2px"')} ${t("rate_lock_note")}</div>
+        <button class="btn btn-primary mt16" id="rsave">${ic("check")} ${t("save")}</button>
+        ${x.manual ? `<button class="btn btn-ghost mt12" id="rauto">${ic("refresh")} ${t("rate_to_auto")}</button>` : ""}`, (sh) => {
+        setTimeout(() => sh.querySelector("#rnew").select(), 250);
+        sh.querySelector("#rsave").onclick = async (ev) => {
+          const v = parseAmt(sh.querySelector("#rnew").value);
+          if (!(v > 0)) { toast(t("e_bad_rate"), true); return; }
+          const btn = ev.currentTarget;
+          busy(btn, true);
+          try { await api("PUT", `/api/rates/${data.day}/${x.code}`, { rate: v }); closeSheet(); toast(t("saved_ok")); await loadDay(); await loadHist(); }
+          catch (er) { busy(btn, false); toast(errText(er), true); }
+        };
+        const ab = sh.querySelector("#rauto");
+        if (ab) ab.onclick = async () => {
+          try { await api("POST", `/api/rates/${data.day}/${x.code}/auto`); closeSheet(); toast(t("saved_ok")); await loadDay(); await loadHist(); }
+          catch (er) { toast(errText(er), true); }
+        };
+      });
+    };
+    await loadDay();
+    await loadHist();
   }
 
   // ------------------------------------------------------------ ADMIN: currencies

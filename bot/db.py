@@ -61,6 +61,18 @@ CREATE TABLE IF NOT EXISTS history(
 );
 CREATE INDEX IF NOT EXISTS ix_hist_req ON history(request_id);
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS daily_rates(
+    day TEXT NOT NULL,              -- YYYY-MM-DD (Toshkent vaqti)
+    code TEXT NOT NULL,             -- valyuta kodi; 1 birlik = rate UZS
+    rate REAL NOT NULL,
+    source TEXT NOT NULL DEFAULT '',  -- avto manba nomi yoki 'manual'
+    manual INTEGER NOT NULL DEFAULT 0, -- 1 = qo'lda qo'yilgan, API ustidan yozmaydi
+    set_by INTEGER,
+    set_by_name TEXT NOT NULL DEFAULT '',
+    set_at TEXT NOT NULL,
+    PRIMARY KEY(day, code)
+);
+CREATE INDEX IF NOT EXISTS ix_rates_code_day ON daily_rates(code, day);
 """
 
 
@@ -73,6 +85,7 @@ async def init(path: str = DB_PATH) -> None:
     await _db.executescript(SCHEMA)
     from .audit import SCHEMA as AUDIT_SCHEMA
     await _db.executescript(AUDIT_SCHEMA)
+    await _migrate()
     # Qidiruv uchun Python funksiyalari (kirill registri, apostroflar, raqamlar) — bot/search.py
     await _db.create_function("norm", 1, search.norm, deterministic=True)
     await _db.create_function("json_values", 1, search.json_values, deterministic=True)
@@ -81,6 +94,15 @@ async def init(path: str = DB_PATH) -> None:
         for i, code in enumerate(DEFAULT_CURRENCIES):
             await _db.execute("INSERT OR IGNORE INTO currencies(code, active, sort) VALUES(?,1,?)", (code, i))
     await _db.commit()
+
+
+async def _migrate() -> None:
+    """Eski bazalarni yangilash (idempotent)."""
+    cols = {r[1] for r in await (await _db.execute("PRAGMA table_info(requests)")).fetchall()}
+    if "rate_day" not in cols:
+        await _db.execute("ALTER TABLE requests ADD COLUMN rate_day TEXT")
+    # Kurs kuni = zayavka kiritilgan kun
+    await _db.execute("UPDATE requests SET rate_day = substr(created_at, 1, 10) WHERE rate_day IS NULL")
 
 
 async def close() -> None:
@@ -244,11 +266,19 @@ async def move_field_up(fid: int) -> None:
 
 
 # ---------------------------------------------------------------- requests
+# Har bir zayavka o'zi kiritilgan kun (rate_day) kursiga bog'langan. O'sha kun kursi bo'lmasa —
+# undan oldingi eng yaqin kun, u ham bo'lmasa — eng birinchi saqlangan kurs.
 _REQ_SELECT = """SELECT r.*, u.full_name AS author_name, u.username AS author_username,
-                        d.full_name AS decider_name
+                        d.full_name AS decider_name,
+                        CASE WHEN r.currency = 'UZS' THEN 1.0 ELSE dr.rate END AS rate,
+                        dr.day AS rate_used_day, dr.manual AS rate_manual, dr.source AS rate_source,
+                        dr.set_by_name AS rate_set_by, dr.set_at AS rate_set_at
                  FROM requests r
                  LEFT JOIN users u ON u.id = r.user_id
-                 LEFT JOIN users d ON d.id = r.decided_by"""
+                 LEFT JOIN users d ON d.id = r.decided_by
+                 LEFT JOIN daily_rates dr ON dr.code = r.currency AND dr.day = COALESCE(
+                     (SELECT MAX(x.day) FROM daily_rates x WHERE x.code = r.currency AND x.day <= r.rate_day),
+                     (SELECT MIN(x.day) FROM daily_rates x WHERE x.code = r.currency))"""
 
 
 def _req(row: dict | None) -> dict | None:
@@ -262,9 +292,9 @@ async def create_request(user_id: int, title: str, amount: float, currency: str,
     ts = now_str()
     cur = await execute(
         """INSERT INTO requests(user_id, title, amount, currency, needed_date, comment, extra,
-                                status, created_at, updated_at) VALUES(?,?,?,?,?,?,?, 'pending', ?, ?)""",
+                                status, created_at, updated_at, rate_day) VALUES(?,?,?,?,?,?,?, 'pending', ?, ?, ?)""",
         user_id, title, amount, currency, needed_date, comment,
-        json.dumps(extra, ensure_ascii=False), ts, ts,
+        json.dumps(extra, ensure_ascii=False), ts, ts, ts[:10],
     )
     return cur.lastrowid
 

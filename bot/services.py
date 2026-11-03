@@ -5,7 +5,7 @@ bitta joyda yoziladi va bot ham, ilova ham bir xil ishlaydi.
 """
 from aiogram import Bot
 
-from . import audit, db
+from . import audit, db, rates
 from .keyboards import decision_kb, main_menu, role_assign_kb
 from .notify import notify
 from .render import render_card
@@ -52,6 +52,7 @@ async def set_role(bot: Bot, actor: dict, target: dict, role: str) -> bool:
 # ---------------------------------------------------------------- zayavkalar
 async def create_request(bot: Bot, actor: dict, title: str, amount: float, currency: str,
                          needed_date: str, comment: str, extra: dict) -> int:
+    await rates.ensure_today()  # zayavka kunining kursi bazada bo'lsin
     rid = await db.create_request(actor["id"], title, amount, currency, needed_date, comment, extra)
     await db.add_history(rid, actor["id"], "created")
     await audit.write(actor, "request", rid, "created", "", None,
@@ -171,6 +172,7 @@ async def delete_field(actor: dict, field: dict) -> None:
 async def add_currency(actor: dict, code: str) -> None:
     before = {c["code"]: c for c in await db.list_currencies(active_only=False)}
     await db.add_currency(code)
+    await rates.ensure_today()  # yangi valyutaning bugungi kursi
     if code not in before:
         await audit.write(actor, "currency", code, "created", "", None, code, label=code)
     elif not before[code]["active"]:

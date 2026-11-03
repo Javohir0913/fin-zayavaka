@@ -143,3 +143,13 @@ Zayavkalar va tarix qidiruvi (`bot/search.py`): katta/kichik harf farqsiz (kiril
 `2 500 000` = `2500000`, bir nechta so'z istalgan tartibda (`ofis printer`), maqsad, izoh, muallif, username,
 valyuta, summa, qo'shimcha maydon qiymatlari va rad sababi bo'yicha. `#12` — aynan 12-ID.
 - Hamma o'zgarishlar `bot/services.py` orqali o'tadi, shuning uchun log hech bir yo'lda tushib qolmaydi.
+
+## 💱 Kunlik valyuta kurslari
+
+- Har bir zayavka **o'zi kiritilgan kun kursi** bilan hisoblanadi (`requests.rate_day` → `daily_rates`).
+- Kurslar API dan avtomatik olinadi (CBU → exchangerate-api.com → zaxira manbalar) va har kun uchun `daily_rates` ga yoziladi.
+- 🛡 Tasdiqlovchi, 👑 Admin va ⭐ Super admin kursni **qo'lda** o'zgartira oladi (istalgan o'tgan yoki bugungi kun).
+  Qo'lda kurs **qulflanadi** — API uni ustidan yozmaydi; "Avtomatikka qaytarish" bilan qulf ochiladi.
+- Kim qo'lda qo'ygani formada (valyuta tanlanganda), zayavka kartochkasida, kurslar sahifasida va Excel da ko'rinadi.
+- Har bir o'zgarish audit logga yoziladi (oldingi kurs → yangi kurs, kim, qachon).
+- Mini App → **Yana → Valyuta kurslari**: kun bo'yicha kurslar, valyuta bo'yicha tarix (👁 Kuzatuvchi faqat ko'radi).

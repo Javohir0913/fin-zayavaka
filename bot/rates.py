@@ -14,6 +14,7 @@ import aiohttp
 
 from . import db
 from .config import BASE_CURRENCY, CBU_URL, EXCHANGERATE_API_KEY, TZ
+from .utils import now_str
 
 log = logging.getLogger(__name__)
 
@@ -98,6 +99,7 @@ async def refresh() -> bool:
             _cache.update(rates=rates, date=day, source=name, ts=time.time())
             await db.set_setting("rates", json.dumps({"rates": rates, "date": day, "source": name, "ts": _cache["ts"]}))
             log.info("Valyuta kurslari yangilandi: %s, %s (USD=%.2f)", name, day, rates["USD"])
+            await store_today()
             return True
     return False
 
@@ -144,4 +146,118 @@ def to_base(amount: float, currency: str, rates: dict[str, float]) -> float | No
     return amount * rate if rate else None
 
 
-__all__ = ["get_rates", "to_base", "refresh", "refresh_loop", "load_saved", "TZ"]
+def req_base(req: dict, rates: dict[str, float]) -> float | None:
+    """Zayavkaning UZS ekvivalenti — O'Z KUNINING kursi bilan (db._REQ_SELECT dagi `rate`).
+    Kunlik kurs umuman yo'q bo'lsa (juda eski baza) — joriy kurs bilan."""
+    rate = req.get("rate")
+    if rate:
+        return req["amount"] * rate
+    return to_base(req["amount"], req["currency"], rates)
+
+
+# ---------------------------------------------------------------- kunlik kurslar (daily_rates)
+def today_str() -> str:
+    return datetime.now(TZ).date().isoformat()
+
+
+async def tracked_codes() -> list[str]:
+    return [c["code"] for c in await db.list_currencies(active_only=False) if c["code"] != BASE_CURRENCY]
+
+
+async def store_today() -> int:
+    """Bugungi avto kurslarni yozadi. QO'LDA qo'yilgan (manual=1) kurslarga TEGMAYDI."""
+    if len(_cache["rates"]) <= 1:
+        return 0
+    day, now = today_str(), now_str()
+    n = 0
+    for code in await tracked_codes():
+        rate = _cache["rates"].get(code)
+        if not rate:
+            continue
+        cur = await db.execute(
+            """INSERT INTO daily_rates(day, code, rate, source, manual, set_at) VALUES(?,?,?,?,0,?)
+               ON CONFLICT(day, code) DO UPDATE SET rate=excluded.rate, source=excluded.source, set_at=excluded.set_at
+               WHERE daily_rates.manual = 0""",
+            day, code, round(rate, 6), _cache["source"], now,
+        )
+        n += cur.rowcount
+    return n
+
+
+async def ensure_today() -> None:
+    """Bugungi kun uchun kurs qatorlari bo'lishini ta'minlaydi (yangi kun boshlanganda, yangi valyuta qo'shilganda)."""
+    if not _loaded:
+        await load_saved()
+    have = await db.fetchval("SELECT COUNT(*) FROM daily_rates WHERE day=?", today_str())
+    if have < len(await tracked_codes()):
+        await store_today()
+
+
+async def day_rates(day: str) -> list[dict]:
+    """Shu kun uchun har bir valyutaning kursi. Shu kun yozuvi bo'lmasa — oldingi eng yaqin kun (carried=True)."""
+    if day == today_str():
+        await ensure_today()
+    out = []
+    for c in await db.list_currencies(active_only=False):
+        if c["code"] == BASE_CURRENCY:
+            continue
+        row = await db.fetchone(
+            "SELECT * FROM daily_rates WHERE code=? AND day<=? ORDER BY day DESC LIMIT 1", c["code"], day)
+        out.append({
+            "code": c["code"], "active": bool(c["active"]),
+            "rate": row["rate"] if row else None,
+            "day": row["day"] if row else None,
+            "carried": bool(row) and row["day"] != day,
+            "manual": bool(row and row["manual"]),
+            "source": row["source"] if row else "",
+            "set_by_name": row["set_by_name"] if row else "",
+            "set_at": row["set_at"] if row else None,
+        })
+    return out
+
+
+async def history(code: str, limit: int = 60) -> list[dict]:
+    return await db.fetchall(
+        "SELECT * FROM daily_rates WHERE code=? ORDER BY day DESC LIMIT ?", code.upper(), limit)
+
+
+def _fmt(rate) -> str:
+    return "—" if rate is None else f"{rate:,.2f}".replace(",", " ")
+
+
+async def set_manual(actor: dict, day: str, code: str, rate: float) -> None:
+    """Qo'lda kurs: qulflanadi — API endi bu kun/valyutani yangilamaydi. Audit logga yoziladi."""
+    from . import audit
+    old = await db.fetchone("SELECT * FROM daily_rates WHERE day=? AND code=?", day, code)
+    await db.execute(
+        """INSERT INTO daily_rates(day, code, rate, source, manual, set_by, set_by_name, set_at)
+           VALUES(?,?,?,'manual',1,?,?,?)
+           ON CONFLICT(day, code) DO UPDATE SET rate=excluded.rate, source='manual', manual=1,
+               set_by=excluded.set_by, set_by_name=excluded.set_by_name, set_at=excluded.set_at""",
+        day, code, rate, actor["id"], actor.get("full_name") or "", now_str(),
+    )
+    old_txt = None if not old else f"{_fmt(old['rate'])} ({'qo‘lda: ' + old['set_by_name'] if old['manual'] else 'avto: ' + old['source']})"
+    await audit.write(actor, "rate", f"{day} {code}", "manual", "Kurs", old_txt, f"{_fmt(rate)} (qo‘lda)", label=f"{code} · {day}")
+
+
+async def set_auto(actor: dict, day: str, code: str) -> bool:
+    """Qo'lda kursni bekor qilib, avtomatikka qaytaradi. Bugun uchun — darhol API kursi qo'yiladi;
+    o'tgan kun uchun tarixiy API kursi yo'q, shuning uchun qiymat qoladi, faqat qulf ochiladi."""
+    from . import audit
+    old = await db.fetchone("SELECT * FROM daily_rates WHERE day=? AND code=?", day, code)
+    if not old or not old["manual"]:
+        return False
+    new_rate = _cache["rates"].get(code) if day == today_str() else None
+    await db.execute(
+        "UPDATE daily_rates SET manual=0, source=?, rate=?, set_by=?, set_by_name=?, set_at=? WHERE day=? AND code=?",
+        _cache["source"] if new_rate else "auto (qulf ochildi)", round(new_rate, 6) if new_rate else old["rate"],
+        actor["id"], actor.get("full_name") or "", now_str(), day, code,
+    )
+    await audit.write(actor, "rate", f"{day} {code}", "auto", "Kurs",
+                      f"{_fmt(old['rate'])} (qo‘lda: {old['set_by_name']})",
+                      f"{_fmt(new_rate or old['rate'])} (avto)", label=f"{code} · {day}")
+    return True
+
+
+__all__ = ["get_rates", "to_base", "req_base", "refresh", "refresh_loop", "load_saved", "store_today",
+           "ensure_today", "day_rates", "history", "set_manual", "set_auto", "TZ"]
