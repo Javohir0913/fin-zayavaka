@@ -5,7 +5,7 @@ bitta joyda yoziladi va bot ham, ilova ham bir xil ishlaydi.
 """
 from aiogram import Bot
 
-from . import audit, db, inbox, rates
+from . import audit, db, inbox, live, rates
 from .keyboards import decision_kb, main_menu, role_assign_kb
 from .notify import notify
 from .render import render_card
@@ -23,6 +23,7 @@ async def notify_new_user(bot: Bot, uid: int, full_name: str, username: str | No
     """Yangi foydalanuvchi haqida: super adminga barcha rollar, adminlarga — admin rolisiz."""
     uname = f" @{e(username)}" if username else ""
     text = f"🆕 <b>Yangi foydalanuvchi</b>\n{e(full_name)}{uname}\nID: <code>{uid}</code>\n\nRol tanlang:"
+    live.users_changed()
     supers = await db.user_ids_by_roles(["superadmin"])
     admins = await db.user_ids_by_roles(["admin"])
     await notify(bot, supers, text, role_assign_kb(uid, allowed_roles({"role": "superadmin"})))
@@ -35,6 +36,7 @@ async def set_role(bot: Bot, actor: dict, target: dict, role: str) -> bool:
     if old == role:
         return False
     await db.set_role(target["id"], role)
+    live.role_changed(target["id"], role)
     await audit.write(actor, "user", target["id"], "role_changed", "role", ROLES.get(old, old), ROLES.get(role, role),
                       label=target["full_name"])
     target = {**target, "role": role}
@@ -58,6 +60,7 @@ async def create_request(bot: Bot, actor: dict, title: str, amount: float, curre
     await audit.write(actor, "request", rid, "created", "", None,
                       f"{fmt_amount(amount)} {currency} · {fmt_date(needed_date)} · {title}", label=f"#{rid} {title[:60]}")
     req = await db.get_request(rid)
+    live.request_changed(req)
     fields = await db.list_fields()
     approvers = [i for i in await db.user_ids_by_roles(["approver", "admin", "superadmin"]) if i != actor["id"]]
     await inbox.add(approvers, "new_request", req, actor)
@@ -73,6 +76,7 @@ async def edit_request(bot: Bot, actor: dict, req: dict, upd: dict, changes: lis
     details = "; ".join(f"{f}: {o if o not in (None, '') else '—'} → {n if n not in (None, '') else '—'}" for f, o, n in changes)
     await db.add_history(req["id"], actor["id"], "edited", details[:1000])
     await audit.write_changes(actor, "request", req["id"], changes, label=_req_label(req))
+    live.request_changed(req)
     if req["user_id"] != actor["id"]:
         await inbox.add([req["user_id"]], "edited", {**req, **upd}, actor, details=details[:300])
         await notify(bot, [req["user_id"]], f"✏️ Zayavkangiz <b>#{req['id']}</b> tahrirlandi:\n{e(details)}\n\nKo'rish: /r{req['id']}")
@@ -85,6 +89,7 @@ async def _status_change(actor: dict, rid: int, old_status: str, new_status: str
                       label=_req_label(req))
     if reason:
         await audit.write(actor, "request", rid, action, "reject_reason", None, reason, label=_req_label(req))
+    live.request_changed(req)
 
 
 async def approve(bot: Bot, rid: int, actor: dict) -> bool:
@@ -150,6 +155,7 @@ async def add_field(actor: dict, name: str, ftype: str, options: list[str], requ
     await audit.write(actor, "field", fid, "created", "", None,
                       f"{name} · {FIELD_TYPES[ftype]}" + (f" · {', '.join(options)}" if options else "")
                       + (" · majburiy" if required else ""), label=name)
+    live.config_changed()
     return fid
 
 
@@ -159,6 +165,7 @@ async def update_field(actor: dict, field: dict, **upd) -> None:
         return
     await db.update_field(field["id"], **upd)
     await audit.write_changes(actor, "field", field["id"], changes, label=upd.get("name", field["name"]))
+    live.config_changed()
 
 
 async def move_field_up(actor: dict, field: dict) -> None:
@@ -166,12 +173,14 @@ async def move_field_up(actor: dict, field: dict) -> None:
     await db.move_field_up(field["id"])
     after = [f["id"] for f in await db.list_fields()]
     if before != after:
+        live.config_changed()
         await audit.write(actor, "field", field["id"], "moved", "Tartib", before.index(field["id"]) + 1,
                           after.index(field["id"]) + 1, label=field["name"])
 
 
 async def delete_field(actor: dict, field: dict) -> None:
     await db.delete_field(field["id"])
+    live.config_changed()
     await audit.write(actor, "field", field["id"], "deleted", "",
                       f"{field['name']} · {FIELD_TYPES.get(field['type'], field['type'])}"
                       + (f" · {', '.join(field['options'])}" if field.get("options") else ""), None, label=field["name"])
@@ -181,6 +190,7 @@ async def delete_field(actor: dict, field: dict) -> None:
 async def add_currency(actor: dict, code: str) -> None:
     before = {c["code"]: c for c in await db.list_currencies(active_only=False)}
     await db.add_currency(code)
+    live.config_changed()
     await rates.ensure_today()  # yangi valyutaning bugungi kursi
     if code not in before:
         await audit.write(actor, "currency", code, "created", "", None, code, label=code)
@@ -193,4 +203,5 @@ async def toggle_currency(actor: dict, code: str) -> None:
     if not cur:
         return
     await db.toggle_currency(code)
+    live.config_changed()
     await audit.write(actor, "currency", code, "edited", "Faol", bool(cur["active"]), not cur["active"], label=code)

@@ -5,7 +5,7 @@ Matn bazada saqlanmaydi: faqat turi (kind) va zayavka ma'lumoti — ilova uni fo
 import json
 from datetime import datetime, timedelta
 
-from . import db
+from . import db, live
 from .utils import now_str
 
 SCHEMA = """
@@ -34,6 +34,7 @@ async def add(user_ids, kind: str, req: dict, actor: dict | None, **extra) -> No
             "INSERT INTO notifications(user_id, kind, request_id, actor_id, actor_name, data, created_at) VALUES(?,?,?,?,?,?,?)",
             uid, kind, req.get("id"), actor["id"] if actor else None, (actor or {}).get("full_name") or "", payload, now_str(),
         )
+    live.notif(user_ids)
 
 
 async def unread_count(uid: int) -> int:
@@ -60,6 +61,7 @@ async def mark_read(uid: int, nid: int | None = None) -> None:
         await db.execute("UPDATE notifications SET read_at=? WHERE user_id=? AND id=? AND read_at IS NULL", now_str(), uid, nid)
     else:
         await db.execute("UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL", now_str(), uid)
+    live.notif([uid])  # boshqa ochiq oynalarda ham hisoblagich yangilansin
 
 
 async def purge_old(now: datetime) -> None:

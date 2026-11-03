@@ -12,7 +12,7 @@ from datetime import datetime
 
 import aiohttp
 
-from . import db
+from . import db, live
 from .config import BASE_CURRENCY, CBU_URL, EXCHANGERATE_API_KEY, TZ
 from .utils import now_str
 
@@ -182,6 +182,8 @@ async def store_today() -> int:
             day, code, round(rate, 6), _cache["source"], now,
         )
         n += cur.rowcount
+    if n:
+        live.config_changed()
     return n
 
 
@@ -239,6 +241,7 @@ async def set_manual(actor: dict, day: str, code: str, rate: float) -> None:
     )
     old_txt = None if not old else f"{_fmt(old['rate'])} ({'qo‘lda: ' + old['set_by_name'] if old['manual'] else 'avto: ' + old['source']})"
     await audit.write(actor, "rate", f"{day} {code}", "manual", "Kurs", old_txt, f"{_fmt(rate)} (qo‘lda)", label=f"{code} · {day}")
+    live.config_changed()
 
 
 async def set_auto(actor: dict, day: str, code: str) -> bool:
@@ -257,6 +260,7 @@ async def set_auto(actor: dict, day: str, code: str) -> bool:
     await audit.write(actor, "rate", f"{day} {code}", "auto", "Kurs",
                       f"{_fmt(old['rate'])} (qo‘lda: {old['set_by_name']})",
                       f"{_fmt(new_rate or old['rate'])} (avto)", label=f"{code} · {day}")
+    live.config_changed()
     return True
 
 

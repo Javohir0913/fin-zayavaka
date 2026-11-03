@@ -4,7 +4,8 @@
   // Telegram ichida: initData bilan. Oddiy brauzerda: Telegram Login + HttpOnly cookie sessiya.
   const inTg = !!(tg && tg.initData);
   if (!inTg) document.documentElement.classList.add("web");
-  const app = document.getElementById("app");
+  const realApp = document.getElementById("app");
+  let app = realApp; // real time yangilanishda vaqtincha ko'rinmas nusxaga qaraydi (softRefresh)
 
   // ------------------------------------------------------------ storage
   const store = {
@@ -285,6 +286,8 @@
   ];
   async function route() {
     closeSheet();
+    if (app !== realApp) { app = realApp; const sh = document.getElementById("app-shadow"); if (sh) sh.remove(); }
+    S.soft = false; S.liveDirty = false; clearTimeout(S.softTimer); S.softTimer = null;
     const h = location.hash || "#/home";
     const id = ++S.renderId;
     S.acts = {};
@@ -438,7 +441,7 @@
       haptic("select"); S.period = b.dataset.p; store.set("period", S.period);
       screenHome(++S.renderId).catch((er) => toast(errText(er), true)); // butun sahifani qayta chizmasdan
     };
-    const on = seg && seg.querySelector(".on"); if (on) on.scrollIntoView({ inline: "center", block: "nearest" });
+    const on = seg && seg.querySelector(".on"); if (on && !S.soft) on.scrollIntoView({ inline: "center", block: "nearest" });
   }
   const kpi = (icon, cls, k, v, sub) => `<div class="card kpi"><div class="k"><span class="ic ${cls}">${ic(icon)}</span>${k}</div><div class="v num">${v}</div>${sub ? `<div class="muted" style="font-size:12px">${sub}</div>` : ""}</div>`;
 
@@ -525,9 +528,11 @@
       const offset = reset ? 0 : items.length;
       const my = ++seq;
       if (reset) document.getElementById("lst").innerHTML = skeleton(4);
-      const d = await api("GET", `/api/requests?scope=${L.scope}&status=${L.status}&q=${encodeURIComponent(L.q)}&offset=${offset}`);
+      const lim = reset && S.soft && L.shown > 20 ? `&limit=${Math.min(L.shown, 200)}` : "";
+      const d = await api("GET", `/api/requests?scope=${L.scope}&status=${L.status}&q=${encodeURIComponent(L.q)}&offset=${offset}${lim}`);
       if (!alive(id) || my !== seq) return;
       items = reset ? d.items : items.concat(d.items);
+      L.shown = items.length;
       if (L.scope === "all" && L.status === "pending" && !L.q) S.pendingCount = d.total;
       document.getElementById("stf").innerHTML = ["all", "pending", "approved", "rejected", "cancelled"].map((s) => `<button class="chip ${L.status === s ? "on" : ""}" data-st="${s}">${t(s)} <span class="cnt">${d.counts[s]}</span></button>`).join("");
       document.getElementById("lst").innerHTML = items.length ? items.map((r) => itemHtml(r, L.scope === "all")).join("")
@@ -584,17 +589,17 @@
     </div>
     ${actions.length ? `<div class="actions"><div class="in">${actions.join("")}</div></div>` : ""}`;
 
-    document.querySelectorAll("[data-img]").forEach(async (img) => {
+    app.querySelectorAll("[data-img]").forEach(async (img) => {
       try {
         const res = await fetch(img.dataset.img, { headers: authHeaders() });
         if (res.ok) img.src = URL.createObjectURL(await res.blob());
       } catch (_) { /* ignore */ }
     });
-    const done = (msg) => { toast(msg); route(); };
+    const done = (msg) => { toast(msg); softRefresh(true); };
     S.acts.approve = async (b) => {
       if (!(await confirmSheet(t("confirm_approve"), t("approve")))) return;
       busy(b, true);
-      try { await api("POST", `/api/requests/${r.id}/approve`); done(t("st_approved")); } catch (e) { busy(b, false); toast(errText(e), true); if (e.code === "already_decided") route(); }
+      try { await api("POST", `/api/requests/${r.id}/approve`); done(t("st_approved")); } catch (e) { busy(b, false); toast(errText(e), true); if (e.code === "already_decided") softRefresh(true); }
     };
     S.acts.reject = () => {
       sheet(`<h3>${t("reject_reason")}</h3><textarea class="input" id="rr" placeholder="${esc(t("reject_reason_ph"))}" maxlength="500"></textarea>
@@ -898,6 +903,138 @@
       S.unread = d.unread; S.unreadInit = true; paintBadges();
     } catch (_) { /* tarmoq — keyingi safar */ }
   }
+
+  // ------------------------------------------------------------ REAL TIME
+  // Server har bir o'zgarishda (zayavka, bildirishnoma, rol, kurs, maydon...) ochiq ilovaga darhol signal yuboradi.
+  // Sahifa "joyida" yangilanadi: skelet chiqmaydi, sahifa tepaga sakramaydi, ochiq oyna/yozilayotgan matnga tegilmaydi.
+  const LIVE_SCREENS = { home: /^#\/home$/, list: /^#\/requests$/, due: /^#\/due$/, notif: /^#\/notifications$/,
+    users: /^#\/admin\/users$/, fields: /^#\/admin\/fields$/, cur: /^#\/admin\/currencies$/, audit: /^#\/admin\/audit$/, rates: /^#\/rates$/ };
+  const curHash = () => location.hash || "#/home";
+  const onScreen = (...keys) => keys.some((k) => LIVE_SCREENS[k].test(curHash()));
+  const busyNow = () => !!document.getElementById("sh") || /^#\/(new|edit\/)/.test(curHash())
+    || (document.activeElement && app.contains(document.activeElement) && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName));
+
+  // Joriy sahifani ko'rinmas nusxada chizib, tayyor bo'lgach bir zumda almashtiradi.
+  async function softRefresh(force) {
+    clearTimeout(S.softTimer); S.softTimer = null;
+    if (!force && busyNow()) { S.liveDirty = true; return; }
+    S.liveDirty = false;
+    const h = curHash();
+    const r = routes.find(([re]) => re.test(h));
+    if (!r || /^#\/(new|edit\/)/.test(h)) return;
+    const [re, fn, top] = r;
+    const id = ++S.renderId;
+    const prevActs = S.acts;
+    S.acts = {};
+    const y = window.scrollY;
+    const shadow = document.createElement("div");
+    shadow.id = "app-shadow"; shadow.setAttribute("aria-hidden", "true");
+    shadow.style.cssText = `position:absolute;left:0;top:0;width:${realApp.clientWidth}px;visibility:hidden;pointer-events:none;z-index:-1`;
+    realApp.parentNode.insertBefore(shadow, realApp);  // id bo'yicha qidiruv avval shu nusxani topadi
+    app = shadow; S.soft = true;
+    let failed = false;
+    try { await fn(id, ...h.match(re).slice(1)); } catch (_) { failed = true; }
+    if (app === shadow) app = realApp;
+    S.soft = false;
+    if (!alive(id) || failed) { shadow.remove(); if (failed && alive(id)) S.acts = prevActs; return; }
+    realApp.replaceChildren(...shadow.childNodes);
+    shadow.remove();
+    renderSide(h);
+    if (!inTg && !top) webBack();
+    if (top) addBell();
+    window.scrollTo(0, y);
+  }
+  function queueRefresh(delay) {
+    if (S.softTimer) return;
+    S.softTimer = setTimeout(() => softRefresh(false), delay == null ? 150 : delay);
+  }
+  // Oyna yopilgach / matn maydonidan chiqilgach kechiktirilgan yangilanish
+  setInterval(() => { if (S.liveDirty && !document.hidden && !busyNow()) softRefresh(false); }, 700);
+
+  async function refreshPending() {
+    if (!can("decide")) return;
+    try {
+      const d = await api("GET", "/api/requests?scope=all&status=pending&limit=1");
+      S.pendingCount = d.counts.pending;
+      // Pastki menyu va yon menyudagi "kutilmoqda" sonini joyida yangilaymiz
+      realApp.querySelectorAll('.tab[data-go="#/requests"]').forEach((tb) => {
+        let dot = tb.querySelector(".dotc");
+        if (!S.pendingCount) { if (dot) dot.remove(); return; }
+        if (!dot) { dot = document.createElement("span"); dot.className = "dotc"; tb.appendChild(dot); }
+        dot.textContent = S.pendingCount > 99 ? "99+" : S.pendingCount;
+      });
+    } catch (_) { /* keyingi safar */ }
+  }
+  async function reloadMe() {
+    try { S.me = await api("GET", "/api/me"); } catch (_) { return; }
+    const role = S.me.user.role;
+    if (role === "pending" || role === "blocked") { boot(); return; }
+  }
+
+  async function onLive(ev) {
+    switch (ev.t) {
+      case "hello":
+        if (S.liveSeen) { S.dash = {}; pollUnread(); refreshPending(); queueRefresh(0); } // qayta ulandi: o'tkazib yuborilgan bo'lishi mumkin
+        S.liveSeen = true;
+        break;
+      case "notif":
+        pollUnread();
+        if (onScreen("notif")) queueRefresh();
+        break;
+      case "req":
+        S.dash = {};
+        refreshPending().then(() => {
+          if (onScreen("home", "list", "due", "audit") || curHash() === "#/r/" + ev.id) queueRefresh();
+          else renderSide(curHash());
+        });
+        break;
+      case "users":
+        if (onScreen("users", "audit")) queueRefresh();
+        break;
+      case "me":
+        await reloadMe(); S.dash = {}; queueRefresh(0);
+        break;
+      case "config":
+        await reloadMe(); S.dash = {};
+        if (!onScreen("notif")) queueRefresh();
+        break;
+      case "all":
+        S.dash = {}; pollUnread(); refreshPending(); queueRefresh(0);
+        break;
+    }
+  }
+
+  // fetch orqali SSE: EventSource sarlavha (Telegram imzosi) yubora olmaydi, fetch esa oladi
+  async function liveConnect() {
+    if (S.liveOn) return;
+    S.liveOn = true;
+    let wait = 1000;
+    while (S.me) {
+      try {
+        const res = await fetch("/api/live", { headers: authHeaders(), credentials: "same-origin", cache: "no-store" });
+        if (res.status === 401 || res.status === 403) break;
+        if (!res.ok || !res.body) throw new Error("live " + res.status);
+        wait = 1000;
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        let buf = "";
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          let i;
+          while ((i = buf.indexOf("\n\n")) >= 0) {
+            const chunk = buf.slice(0, i); buf = buf.slice(i + 2);
+            const data = chunk.split("\n").filter((l) => l.startsWith("data:")).map((l) => l.slice(5).trim()).join("");
+            if (data) { try { onLive(JSON.parse(data)); } catch (_) { /* noto'g'ri hodisa */ } }
+          }
+        }
+      } catch (_) { /* tarmoq uzildi — qayta ulanamiz */ }
+      await new Promise((ok) => setTimeout(ok, wait));
+      wait = Math.min(wait * 2, 15000);
+    }
+    S.liveOn = false;
+  }
   const N_ICON = { new_request: ["plus", "bg-primary"], approved: ["check", "bg-success"], rejected: ["x", "bg-danger"],
     edited: ["edit", "bg-warning"], reopened: ["refresh", "bg-primary"], cancelled: ["ban", "s-cancelled"] };
   async function screenNotifications(id) {
@@ -994,7 +1131,7 @@
       sheet(`<h3>${esc(u.full_name)}</h3><p>${t("change_role")}</p><div class="card menu">${(S.me.assignable_roles || []).map((r) => `<button class="mi" data-r="${r}"><span class="tx"><b>${t("r_" + r)}</b></span>${u.role === r ? ic("check", 'class="chev" style="color:var(--primary)"') : ""}</button>`).join("")}</div>`, (sh) => {
         sh.onclick = async (e) => {
           const rb = e.target.closest("[data-r]"); if (!rb) return;
-          try { await api("POST", `/api/admin/users/${u.id}/role`, { role: rb.dataset.r }); closeSheet(); toast(t("saved_ok")); route(); }
+          try { await api("POST", `/api/admin/users/${u.id}/role`, { role: rb.dataset.r }); closeSheet(); toast(t("saved_ok")); softRefresh(true); }
           catch (er) { toast(errText(er), true); }
         };
       });
@@ -1018,7 +1155,7 @@
       cb.onclick = (e) => e.stopPropagation();
       cb.onchange = async () => {
         haptic("select");
-        try { await api("PATCH", `/api/admin/fields/${cb.dataset.tg}`, { active: cb.checked }); route(); } catch (er) { toast(errText(er), true); cb.checked = !cb.checked; }
+        try { await api("PATCH", `/api/admin/fields/${cb.dataset.tg}`, { active: cb.checked }); softRefresh(true); } catch (er) { toast(errText(er), true); cb.checked = !cb.checked; }
       };
     });
     app.querySelectorAll("[data-stop]").forEach((x) => (x.onclick = (e) => e.stopPropagation()));
@@ -1045,14 +1182,14 @@
         if (type === "choice") body.options = sh.querySelector("#fo").value;
         if (isNew) body.type = type;
         busy(ev.currentTarget, true);
-        try { await api(isNew ? "POST" : "PATCH", isNew ? "/api/admin/fields" : `/api/admin/fields/${f.id}`, body); closeSheet(); toast(t("saved_ok")); route(); }
+        try { await api(isNew ? "POST" : "PATCH", isNew ? "/api/admin/fields" : `/api/admin/fields/${f.id}`, body); closeSheet(); toast(t("saved_ok")); softRefresh(true); }
         catch (er) { busy(ev.currentTarget, false); toast(errText(er), true); }
       };
       if (!isNew) {
-        sh.querySelector("#fu").onclick = async () => { try { await api("PATCH", `/api/admin/fields/${f.id}`, { move: "up" }); closeSheet(); route(); } catch (er) { toast(errText(er), true); } };
+        sh.querySelector("#fu").onclick = async () => { try { await api("PATCH", `/api/admin/fields/${f.id}`, { move: "up" }); closeSheet(); softRefresh(true); } catch (er) { toast(errText(er), true); } };
         sh.querySelector("#fd").onclick = async () => {
           if (!(await confirmSheet(t("confirm_delete_field"), t("delete"), true))) return;
-          try { await api("DELETE", `/api/admin/fields/${f.id}`); toast(t("saved_ok")); route(); } catch (er) { toast(errText(er), true); }
+          try { await api("DELETE", `/api/admin/fields/${f.id}`); toast(t("saved_ok")); softRefresh(true); } catch (er) { toast(errText(er), true); }
         };
       }
     });
@@ -1208,7 +1345,7 @@
     app.querySelectorAll("[data-c]").forEach((cb) => {
       cb.onchange = async () => {
         haptic("select");
-        try { await api("POST", `/api/admin/currencies/${cb.dataset.c}/toggle`); S.me = await api("GET", "/api/me"); route(); }
+        try { await api("POST", `/api/admin/currencies/${cb.dataset.c}/toggle`); S.me = await api("GET", "/api/me"); softRefresh(true); }
         catch (er) { toast(errText(er), true); cb.checked = !cb.checked; }
       };
     });
@@ -1216,7 +1353,7 @@
       const code = document.getElementById("cc").value.trim().toUpperCase();
       if (!/^[A-Z]{3}$/.test(code)) { toast(t("e_bad_currency"), true); return; }
       busy(b, true);
-      try { await api("POST", "/api/admin/currencies", { code }); S.me = await api("GET", "/api/me"); toast(t("saved_ok")); route(); }
+      try { await api("POST", "/api/admin/currencies", { code }); S.me = await api("GET", "/api/me"); toast(t("saved_ok")); softRefresh(true); }
       catch (er) { busy(b, false); toast(errText(er), true); }
     };
   }
@@ -1294,6 +1431,7 @@
       document.addEventListener("visibilitychange", () => { if (!document.hidden) pollUnread(); });
     }
     route();
+    liveConnect();
   }
 
   if (inTg) {

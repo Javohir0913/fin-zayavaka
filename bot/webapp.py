@@ -1,4 +1,5 @@
 """Telegram Mini App uchun HTTP API + statik fayllar (bot bilan bitta jarayonda ishlaydi)."""
+import asyncio
 import json
 import logging
 import re
@@ -11,7 +12,7 @@ from aiogram.types import BufferedInputFile
 from aiogram.utils.web_app import safe_parse_webapp_init_data
 from aiohttp import web
 
-from . import audit, db, inbox, presence, reports, services, webauth
+from . import audit, db, inbox, live, presence, reports, services, webauth
 from . import rates as rates_mod
 from .config import BASE_CURRENCY, BOT_TOKEN, WEB_HOST, WEB_PORT
 
@@ -322,7 +323,11 @@ async def list_requests(request: web.Request):
         uid = None
     else:
         uid = user["id"]
-    items = await db.list_requests(uid, status, offset, PAGE, q)
+    try:  # real time yangilanishda allaqachon ochilgan sahifalarni bir so'rovda qayta olish uchun
+        limit = min(max(int(request.query.get("limit", PAGE)), 1), 200)
+    except ValueError:
+        limit = PAGE
+    items = await db.list_requests(uid, status, offset, limit, q)
     total = await db.count_requests(uid, status, q)
     _, fmap = await fields_map()
     rates, _ = await get_rates()
@@ -549,6 +554,48 @@ async def notif_read(request: web.Request):
     return ok({"unread": await inbox.unread_count(request["user"]["id"])})
 
 
+# ---------------------------------------------------------------- real time (Server-Sent Events)
+LIVE_PING = 25  # nginx 60 soniyada jim ulanishni uzadi; ping uni tirik ushlaydi
+
+
+@routes.get("/api/live")
+async def live_stream(request: web.Request):
+    """Ochiq ilova/sayt shu oqimni tinglaydi. Hodisa kelsa — kerakli sahifani darhol qayta oladi."""
+    user = request["user"]
+    via = "app" if request.headers.get("Authorization", "").startswith("tma ") else "web"
+    resp = web.StreamResponse(headers={
+        "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform",
+        "X-Accel-Buffering": "no",  # nginx javobni bufferlamasin — hodisa darhol yetib borsin
+    })
+    await resp.prepare(request)
+    conn = live.connect(user)
+    try:
+        await resp.write(b'retry: 3000\ndata: {"t":"hello"}\n\n')
+        while True:
+            try:
+                data = await asyncio.wait_for(conn.queue.get(), LIVE_PING)
+            except asyncio.TimeoutError:
+                await resp.write(b": ping\n\n")
+                await presence.touch(user["id"], via)
+                continue
+            if data is None:  # server to'xtayapti
+                break
+            await resp.write(f"data: {data}\n\n".encode())
+    except (ConnectionResetError, ConnectionError):
+        pass
+    finally:
+        if live.disconnect(conn):
+            try:
+                await presence.mark_left(user["id"])
+            finally:
+                live.presence_changed()
+    return resp
+
+
+async def _close_live(app: web.Application) -> None:
+    live.close_all()
+
+
 # ---------------------------------------------------------------- muddatlar
 @routes.get("/api/due")
 async def due(request: web.Request):
@@ -606,8 +653,9 @@ async def admin_users(request: web.Request):
     need(request["user"], "admin")
     items = await db.list_users(0, 1000)
     now = int(time.time())
+    connected = live.online_ids()
     for u in items:
-        u["online"] = presence.is_online(u.get("last_seen"), now)
+        u["online"] = presence.is_online(u["id"], u.get("last_seen"), connected, now)
     return ok({"items": items, "now": now, "online": sum(u["online"] for u in items)})
 
 
@@ -852,6 +900,7 @@ async def index(request: web.Request):
 def build_app(bot: Bot) -> web.Application:
     app = web.Application(middlewares=[auth_mw], client_max_size=20 * 1024 * 1024)
     app[BOT_KEY] = bot
+    app.on_shutdown.append(_close_live)
     app.add_routes(routes)
     app.router.add_get("/", index)
     app.router.add_static("/static/", STATIC_DIR / "static", append_version=False)
