@@ -6,12 +6,11 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from .. import db
+from .. import db, services
 from ..config import PAGE_SIZE
 from ..fieldinput import ask_field, parse_field_callback, parse_field_message
 from ..keyboards import (BTN_ALL, BTN_DUE, BTN_MY, BTN_PENDING, abort_row, btn, card_kb,
                          currency_kb, date_kb, ikb, list_kb)
-from ..notify import notify
 from ..render import fmt_field_value, render_card, text_line
 from ..states import EditReq, RejectReq
 from ..utils import (HISTORY_ACTIONS, STATUS, can, e, fmt_amount, fmt_date, fmt_dt, parse_amount,
@@ -201,16 +200,10 @@ async def approve(cb: CallbackQuery, user: dict, bot: Bot):
         await cb.answer("Ruxsat yo'q", show_alert=True)
         return
     rid = int(cb.data.split(":")[2])
-    if not await db.decide(rid, "approved", user["id"]):
+    if not await services.approve(bot, rid, user):
         await cb.answer("Bu zayavka allaqachon ko'rib chiqilgan", show_alert=True)
     else:
-        await db.add_history(rid, user["id"], "approved")
         await cb.answer("✅ Tasdiqlandi")
-        req = await db.get_request(rid)
-        if req["user_id"] != user["id"]:
-            fields = await db.list_fields()
-            await notify(bot, [req["user_id"]],
-                         f"✅ Zayavkangiz <b>#{rid}</b> tasdiqlandi!\n\n" + render_card(req, fields))
     req = await db.get_request(rid)
     if req:
         await edit_card(cb.message, req, user)
@@ -250,15 +243,10 @@ async def reject_no_reason(cb: CallbackQuery, state: FSMContext, user: dict, bot
 async def _do_reject(msg: Message, state: FSMContext, user: dict, bot: Bot, reason: str):
     rid = (await state.get_data()).get("req_id")
     await state.clear()
-    if not rid or not await db.decide(rid, "rejected", user["id"], reason):
+    if not rid or not can(user, "decide") or not await services.reject(bot, rid, user, reason):
         await msg.answer("Bu zayavka allaqachon ko'rib chiqilgan.")
         return
-    await db.add_history(rid, user["id"], "rejected", reason)
-    req = await db.get_request(rid)
-    await send_card(msg, req, user)
-    if req["user_id"] != user["id"]:
-        fields = await db.list_fields()
-        await notify(bot, [req["user_id"]], f"❌ Zayavkangiz <b>#{rid}</b> rad etildi.\n\n" + render_card(req, fields))
+    await send_card(msg, await db.get_request(rid), user)
 
 
 @router.callback_query(F.data.startswith("rq:cn:"))
@@ -281,10 +269,9 @@ async def cancel_req(cb: CallbackQuery, user: dict):
 async def cancel_req_yes(cb: CallbackQuery, user: dict):
     rid = int(cb.data.split(":")[2])
     req = await db.get_request(rid)
-    if not req or req["user_id"] != user["id"] or not await db.decide(rid, "cancelled", user["id"]):
+    if not req or req["user_id"] != user["id"] or not await services.cancel(rid, user):
         await cb.answer("Bekor qilib bo'lmadi", show_alert=True)
         return
-    await db.add_history(rid, user["id"], "cancelled")
     await cb.answer("Bekor qilindi")
     await edit_card(cb.message, await db.get_request(rid), user)
 
@@ -295,12 +282,8 @@ async def reopen(cb: CallbackQuery, user: dict, bot: Bot):
         await cb.answer("Ruxsat yo'q", show_alert=True)
         return
     rid = int(cb.data.split(":")[2])
-    if await db.reopen(rid):
-        await db.add_history(rid, user["id"], "reopened")
+    if await services.reopen(bot, rid, user):
         await cb.answer("↩️ Kutishga qaytarildi")
-        req = await db.get_request(rid)
-        if req["user_id"] != user["id"]:
-            await notify(bot, [req["user_id"]], f"↩️ Zayavkangiz <b>#{rid}</b> qayta ko'rib chiqishga qaytarildi.")
     else:
         await cb.answer()
     req = await db.get_request(rid)
@@ -377,8 +360,12 @@ async def _apply_edit(msg: Message, state: FSMContext, user: dict, bot: Bot, val
         return
     if attr in BUILTIN:
         label, col = BUILTIN[attr]
+        label = label.split(" ", 1)[1]  # emojisiz: "Summa", "Maqsad" ...
         old = req[col]
-        await db.update_request(rid, **{col: value})
+        if old == value:
+            await msg.answer("O'zgarish yo'q.")
+            return
+        upd = {col: value}
         if attr == "amount":
             old, value = fmt_amount(old), fmt_amount(value)
         elif attr == "date":
@@ -389,21 +376,17 @@ async def _apply_edit(msg: Message, state: FSMContext, user: dict, bot: Bot, val
             await msg.answer("Maydon topilmadi.")
             return
         label = field["name"]
-        extra = req["extra"]
+        extra = dict(req["extra"])
         old = fmt_field_value(field, extra.get(str(field["id"])))
         if value is None:
             extra.pop(str(field["id"]), None)
         else:
             extra[str(field["id"])] = value
-        await db.update_request(rid, extra=extra)
+        upd = {"extra": extra}
         value = fmt_field_value(field, value)
-    details = f"{label}: {old or '—'} → {value or '—'}"
-    await db.add_history(rid, user["id"], "edited", details)
-    req = await db.get_request(rid)
+    await services.edit_request(bot, user, req, upd, [(label, old, value)])
     await msg.answer("✏️ Saqlandi.")
-    await send_card(msg, req, user)
-    if req["user_id"] != user["id"]:
-        await notify(bot, [req["user_id"]], f"✏️ Zayavkangiz <b>#{rid}</b> tahrirlandi:\n{e(details)}\n\nKo'rish: /r{rid}")
+    await send_card(msg, await db.get_request(rid), user)
 
 
 @router.message(EditReq.value)

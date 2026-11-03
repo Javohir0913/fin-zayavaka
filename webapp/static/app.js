@@ -265,6 +265,7 @@
     [/^#\/admin\/users$/, screenUsers, false],
     [/^#\/admin\/fields$/, screenFields, false],
     [/^#\/admin\/currencies$/, screenCurrencies, false],
+    [/^#\/admin\/audit$/, screenAudit, false],
   ];
   async function route() {
     closeSheet();
@@ -766,6 +767,7 @@
         ${menuItem("#/admin/users", "users", "bg-primary", t("users"), t("change_role"))}
         ${menuItem("#/admin/fields", "sliders", "bg-success", t("fields"), t("fields_hint"))}
         ${menuItem("#/admin/currencies", "coins", "bg-warning", t("currencies"), S.me.currencies.join(", "))}
+        ${menuItem("#/admin/audit", "clock", "bg-danger", t("audit"), t("audit_sub"))}
       </div></div>` : ""}
       <p class="muted" style="text-align:center;font-size:12px;margin-top:28px">${t("app_name")} · v1.0</p>
     </div>${tabbar("more")}`;
@@ -855,6 +857,73 @@
         };
       }
     });
+  }
+
+  // ------------------------------------------------------------ ADMIN: audit log
+  async function screenAudit(id) {
+    const isSuper = can("manage_admins");
+    S.audit = S.audit || { entity: "", deleted: "N", q: "" };
+    const A = S.audit;
+    if (!isSuper) A.deleted = "N";
+    const ENT = [["", "ent_all"], ["request", "ent_request"], ["user", "ent_user"], ["field", "ent_field"], ["currency", "ent_currency"]];
+    const ENT_ICON = { request: "file", user: "user", field: "sliders", currency: "coins" };
+    const ENT_CLS = { request: "bg-primary", user: "bg-warning", field: "bg-success", currency: "bg-warning" };
+    app.innerHTML = `<div class="screen no-tabs">
+      <div class="topbar"><div><h1>${t("audit")}</h1><div class="sub" id="ahint"></div></div></div>
+      ${isSuper ? `<div class="seg" id="adel">${[["N", "a_active"], ["Y", "a_deleted"], ["all", "a_all"]].map(([v, k]) => `<button class="${A.deleted === v ? "on" : ""}" data-v="${v}">${t(k)}</button>`).join("")}</div>` : ""}
+      <label class="search">${ic("search")}<input id="aq" type="search" placeholder="${esc(t("audit_search"))}" value="${esc(A.q)}" enterkeyhint="search"></label>
+      <div class="chips" id="aent">${ENT.map(([v, k]) => `<button class="chip ${A.entity === v ? "on" : ""}" data-e="${v}">${t(k)}</button>`).join("")}</div>
+      <div class="list mt12" id="alst">${skeleton(5)}</div><div id="amore"></div>
+    </div>`;
+    let items = [];
+    const fieldName = (f) => ({ status: t("f_status"), reject_reason: t("reason"), role: t("role") }[f] || f);
+    const val = (v, cls) => v == null || v === "" ? `<span class="muted">—</span>` : `<span class="${cls}">${esc(v)}</span>`;
+    function row(r) {
+      const target = r.entity === "request" ? `<button class="link" data-go="#/r/${esc(r.entity_id)}">${esc(r.entity_label || "#" + r.entity_id)}</button>` : `<b>${esc(r.entity_label || r.entity_id)}</b>`;
+      const change = r.field || r.old_value != null || r.new_value != null
+        ? `<div class="chg">${r.field ? `<span class="muted">${esc(fieldName(r.field))}:</span> ` : ""}${r.old_value != null ? val(r.old_value, "old") + ` <span class="muted">→</span> ` : ""}${val(r.new_value, "new")}</div>` : "";
+      const del = r.deleted === "Y";
+      return `<div class="card aud ${del ? "is-del" : ""}">
+        <div class="aud-h"><span class="ic ${ENT_CLS[r.entity] || "bg-primary"}">${ic(ENT_ICON[r.entity] || "clock")}</span>
+          <div class="aud-t"><b>${esc(r.actor_name || "—")}</b> <span class="muted">· ${t("act_" + r.action) === "act_" + r.action ? esc(r.action) : t("act_" + r.action)}</span><div class="muted aud-d">${fmtDT(r.created_at)} · ${target}</div></div>
+          ${del ? `<span class="badge s-rejected">deleted: Y</span>` : ""}</div>
+        ${change}
+        ${isSuper ? `<div class="aud-a">${del
+          ? `<span class="muted">${t("deleted_at")}: ${fmtDT(r.deleted_at)}</span><button class="btn btn-ghost btn-sm" data-act="flag" data-id="${r.id}" data-v="N">${ic("undo")} ${t("restore")}</button>`
+          : `${r.restored_at ? `<span class="muted">${t("restored")}: ${fmtDT(r.restored_at)}</span>` : "<span></span>"}<button class="btn btn-ghost btn-sm" data-act="flag" data-id="${r.id}" data-v="Y" style="color:var(--danger)">${ic("trash")} ${t("mark_deleted")}</button>`}</div>` : ""}
+      </div>`;
+    }
+    async function load(reset) {
+      const myId = S.renderId;
+      if (reset) { items = []; document.getElementById("alst").innerHTML = skeleton(4); }
+      const d = await api("GET", `/api/audit?entity=${A.entity}&deleted=${A.deleted}&q=${encodeURIComponent(A.q)}&offset=${items.length}`);
+      if (!alive(id) || myId !== S.renderId) return;
+      items = items.concat(d.items);
+      document.getElementById("ahint").textContent = t("audit_hint", { n: d.retention_days }) + " · " + d.total;
+      document.getElementById("alst").innerHTML = items.length ? items.map(row).join("")
+        : `<div class="empty card"><div class="ill">${ic("clock")}</div><b>${t("audit_empty")}</b></div>`;
+      document.getElementById("amore").innerHTML = items.length < d.total ? `<button class="btn btn-ghost mt12" data-act="amore">${t("load_more")}</button>` : "";
+    }
+    const seg = document.getElementById("adel");
+    if (seg) seg.onclick = (e) => { const b = e.target.closest("[data-v]"); if (!b) return; haptic("select"); A.deleted = b.dataset.v; seg.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); load(true).catch((er) => toast(errText(er), true)); };
+    document.getElementById("aent").onclick = (e) => { const b = e.target.closest("[data-e]"); if (!b) return; haptic("select"); A.entity = b.dataset.e; document.querySelectorAll("#aent .chip").forEach((x) => x.classList.toggle("on", x === b)); load(true).catch((er) => toast(errText(er), true)); };
+    let tm;
+    document.getElementById("aq").oninput = (e) => { clearTimeout(tm); tm = setTimeout(() => { A.q = e.target.value; load(true).catch((er) => toast(errText(er), true)); }, 300); };
+    S.acts.amore = async (b) => { busy(b, true); try { await load(false); } catch (er) { busy(b, false); toast(errText(er), true); } };
+    S.acts.flag = async (b) => {
+      const v = b.dataset.v;
+      if (v === "Y" && !(await confirmSheet(t("confirm_mark_deleted"), t("mark_deleted"), true))) return;
+      busy(b, true);
+      try {
+        const res = await api("POST", `/api/audit/${b.dataset.id}/deleted`, { value: v });
+        const i = items.findIndex((x) => x.id === res.item.id);
+        if (i >= 0) items[i] = res.item;
+        if (A.deleted !== "all") items = items.filter((x) => x.deleted === A.deleted);
+        document.getElementById("alst").innerHTML = items.length ? items.map(row).join("") : `<div class="empty card"><div class="ill">${ic("clock")}</div><b>${t("audit_empty")}</b></div>`;
+        toast(v === "N" ? t("restored") : t("saved_ok"));
+      } catch (er) { busy(b, false); toast(errText(er), true); }
+    };
+    await load(true);
   }
 
   // ------------------------------------------------------------ ADMIN: currencies

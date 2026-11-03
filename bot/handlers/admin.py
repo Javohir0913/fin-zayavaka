@@ -6,9 +6,8 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from .. import db
-from ..keyboards import BTN_ADMIN, abort_row, btn, ikb, main_menu, role_assign_kb
-from ..notify import notify
+from .. import db, services
+from ..keyboards import BTN_ADMIN, abort_row, btn, ikb, role_assign_kb
 from ..states import AddCurrency, AddField, EditOptions, RenameField
 from ..utils import FIELD_TYPES, ROLE_ERRORS, ROLES, allowed_roles, can, e, role_change_error, short
 
@@ -114,21 +113,10 @@ async def set_role(cb: CallbackQuery, user: dict, bot: Bot):
     if err:
         await cb.answer(ROLE_ERRORS[err], show_alert=True)
         return
-    old = target["role"]
-    await db.set_role(uid, role)
-    target["role"] = role
+    await services.set_role(bot, user, target, role)
     await cb.answer(f"Rol: {ROLES[role]}")
     await _safe_edit(cb.message, f"✅ <b>{e(target['full_name'])}</b> — rol: {ROLES[role]}",
                      ikb([[btn("⬅️ Foydalanuvchilar", "adm:users:0")]]))
-    if old != role:
-        if role == "blocked":
-            await notify(bot, [uid], "⛔ Sizning kirishingiz bloklandi.")
-        else:
-            try:
-                await bot.send_message(uid, f"🎉 Sizga rol berildi: <b>{ROLES[role]}</b>\n\n/start — menyuni ochish",
-                                       reply_markup=main_menu(target))
-            except Exception:
-                pass
 
 
 # ---------------------------------------------------------------- maydonlar
@@ -190,29 +178,30 @@ async def field_card(cb: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("adm:fa:"))
-async def field_toggle_active(cb: CallbackQuery):
+async def field_toggle_active(cb: CallbackQuery, user: dict):
     fid = int(cb.data.split(":")[2])
     f = await db.get_field(fid)
     if f:
-        await db.update_field(fid, active=0 if f["active"] else 1)
+        await services.update_field(user, f, active=0 if f["active"] else 1)
     await _field_card(cb.message, fid)
     await cb.answer()
 
 
 @router.callback_query(F.data.startswith("adm:fr:"))
-async def field_toggle_required(cb: CallbackQuery):
+async def field_toggle_required(cb: CallbackQuery, user: dict):
     fid = int(cb.data.split(":")[2])
     f = await db.get_field(fid)
     if f:
-        await db.update_field(fid, required=0 if f["required"] else 1)
+        await services.update_field(user, f, required=0 if f["required"] else 1)
     await _field_card(cb.message, fid)
     await cb.answer()
 
 
 @router.callback_query(F.data.startswith("adm:fu:"))
-async def field_up(cb: CallbackQuery):
-    fid = int(cb.data.split(":")[2])
-    await db.move_field_up(fid)
+async def field_up(cb: CallbackQuery, user: dict):
+    f = await db.get_field(int(cb.data.split(":")[2]))
+    if f:
+        await services.move_field_up(user, f)
     await cb.answer("Tartib o'zgardi")
     text, kb = await _fields_view()
     await _safe_edit(cb.message, text, kb)
@@ -229,8 +218,10 @@ async def field_delete_ask(cb: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("adm:fdy:"))
-async def field_delete(cb: CallbackQuery):
-    await db.delete_field(int(cb.data.split(":")[2]))
+async def field_delete(cb: CallbackQuery, user: dict):
+    f = await db.get_field(int(cb.data.split(":")[2]))
+    if f:
+        await services.delete_field(user, f)
     await cb.answer("O'chirildi")
     text, kb = await _fields_view()
     await _safe_edit(cb.message, text, kb)
@@ -245,14 +236,16 @@ async def field_rename_start(cb: CallbackQuery, state: FSMContext):
 
 
 @router.message(RenameField.name, F.text)
-async def field_rename(message: Message, state: FSMContext):
+async def field_rename(message: Message, state: FSMContext, user: dict):
     name = message.text.strip()
     if not 1 <= len(name) <= 60:
         await message.answer("Nom 1–60 belgi bo'lishi kerak.")
         return
     fid = (await state.get_data())["fid"]
     await state.clear()
-    await db.update_field(fid, name=name)
+    f = await db.get_field(fid)
+    if f:
+        await services.update_field(user, f, name=name)
     await _field_card(message, fid, edit=False)
 
 
@@ -280,14 +273,16 @@ def _parse_options(text: str) -> list[str]:
 
 
 @router.message(EditOptions.options, F.text)
-async def field_options(message: Message, state: FSMContext):
+async def field_options(message: Message, state: FSMContext, user: dict):
     opts = _parse_options(message.text)
     if len(opts) < 2:
         await message.answer("Kamida 2 ta variant kiriting.")
         return
     fid = (await state.get_data())["fid"]
     await state.clear()
-    await db.update_field(fid, options=opts)
+    f = await db.get_field(fid)
+    if f:
+        await services.update_field(user, f, options=opts)
     await _field_card(message, fid, edit=False)
 
 
@@ -347,10 +342,10 @@ async def _ask_required(msg: Message, state: FSMContext):
 
 
 @router.callback_query(AddField.required, F.data.startswith("adm:freq:"))
-async def field_add_required(cb: CallbackQuery, state: FSMContext):
+async def field_add_required(cb: CallbackQuery, state: FSMContext, user: dict):
     data = await state.get_data()
     await state.clear()
-    fid = await db.add_field(data["name"], data["type"], data.get("options", []), cb.data.endswith(":1"))
+    fid = await services.add_field(user, data["name"], data["type"], data.get("options", []), cb.data.endswith(":1"))
     await cb.answer("Maydon qo'shildi")
     await cb.message.edit_text(f"✅ «{e(data['name'])}» maydoni qo'shildi. Endi yangi zayavkalarda so'raladi.")
     await _field_card(cb.message, fid, edit=False)
@@ -377,13 +372,13 @@ async def cur_list(cb: CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith("adm:ct:"))
-async def cur_toggle(cb: CallbackQuery):
+async def cur_toggle(cb: CallbackQuery, user: dict):
     code = cb.data.split(":")[2]
     curs = await db.list_currencies(active_only=True)
     if len(curs) == 1 and curs[0]["code"] == code:
         await cb.answer("Kamida bitta valyuta faol bo'lishi kerak", show_alert=True)
         return
-    await db.toggle_currency(code)
+    await services.toggle_currency(user, code)
     text, kb = await _cur_view()
     await _safe_edit(cb.message, text, kb)
     await cb.answer()
@@ -398,12 +393,12 @@ async def cur_add_start(cb: CallbackQuery, state: FSMContext):
 
 
 @router.message(AddCurrency.code, F.text)
-async def cur_add(message: Message, state: FSMContext):
+async def cur_add(message: Message, state: FSMContext, user: dict):
     code = message.text.strip().upper()
     if not re.fullmatch(r"[A-Z]{3}", code):
         await message.answer("Kod 3 ta lotin harfidan iborat bo'lishi kerak.")
         return
     await state.clear()
-    await db.add_currency(code)
+    await services.add_currency(user, code)
     text, kb = await _cur_view()
     await message.answer(f"✅ {code} qo'shildi.\n\n" + text, reply_markup=kb)

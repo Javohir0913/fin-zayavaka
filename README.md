@@ -116,3 +116,22 @@ ssh azureuser@SERVER 'sudo systemctl restart fin-zayavka'
 
 ⚠️ Bitta bot tokeni bilan faqat **bitta** nusxa ishlashi mumkin: server ishlayotganda botni lokal kompyuterda ishga tushirmang
 (yoki lokal sinov uchun alohida test bot tokenidan foydalaning).
+
+## 🔐 Rollar ierarxiyasi
+
+| Kim | Kimga qanday rol bera oladi |
+|---|---|
+| ⭐ **Super admin** (faqat bitta — `.env` dagi `ADMIN_IDS` ning birinchisi) | Hammaga: admin berish/olish, adminni bloklash, boshqa barcha rollar. Uning rolini hech kim o'zgartira olmaydi. |
+| 👑 **Admin** | Faqat admin bo'lmaganlarga: 👤 Xodim, 🛡 Tasdiqlovchi, 👁 Kuzatuvchi, ⛔ Bloklash (yangi kelganlar ham). Admin rolini bera olmaydi; boshqa adminga, super adminga va o'ziga tega olmaydi. |
+
+Qoida bitta joyda: `bot/utils.py → role_change_error()` — bot va Mini App bir xil ishlaydi.
+
+## 🧾 Audit log (o'zgarishlar tarixi)
+
+Har bir o'zgarish `audit_log` jadvaliga yoziladi: **kim, qachon, nimani, oldin → keyin**
+(zayavka maydonlari, holat, rad sababi, rollar, qo'shimcha maydonlar, valyutalar, yangi foydalanuvchilar).
+
+- **3 oy** (90 kun) dan eski yozuvlar har kuni avtomatik `deleted = 'Y'` bo'ladi — **bazadan o'chirilmaydi**.
+- Super admin istalgan yozuvni `Y` (yashirish) yoki `N` (tiklash) qila oladi. Tiklangan yozuv qayta avto-o'chirilmaydi.
+- Ko'rish: Mini App → **Yana → O'zgarishlar tarixi** (adminlar — faol yozuvlar; super admin — `Y` lar ham).
+- Hamma o'zgarishlar `bot/services.py` orqali o'tadi, shuning uchun log hech bir yo'lda tushib qolmaydi.

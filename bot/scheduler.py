@@ -1,11 +1,11 @@
-"""Har kuni REPORT_HOUR da tasdiqlovchi/kuzatuvchi/adminlarga qisqa hisobot yuboradi."""
+"""Kunlik vazifalar: REPORT_HOUR da qisqa hisobot (-1 = o'chiq) va audit logni 3 oylik tozalash."""
 import asyncio
 import logging
 from datetime import datetime
 
 from aiogram import Bot
 
-from . import db, reports
+from . import audit, db, reports
 from .config import REPORT_HOUR, TZ
 from .notify import notify
 
@@ -13,13 +13,15 @@ log = logging.getLogger(__name__)
 
 
 async def scheduler_loop(bot: Bot) -> None:
-    if REPORT_HOUR < 0:
-        return
     while True:
         try:
             now = datetime.now(TZ)
             today = now.date().isoformat()
-            if now.hour >= REPORT_HOUR and await db.get_setting("last_daily_report") != today:
+            # Audit log: 3 oydan eski yozuvlar deleted='Y' (kuniga bir marta, jismonan o'chirilmaydi)
+            if await db.get_setting("last_audit_purge") != today:
+                await db.set_setting("last_audit_purge", today)
+                await audit.purge_old(now)
+            if REPORT_HOUR >= 0 and now.hour >= REPORT_HOUR and await db.get_setting("last_daily_report") != today:
                 await db.set_setting("last_daily_report", today)
                 text = await reports.short_report()
                 ids = await db.user_ids_by_roles(["superadmin", "admin", "approver", "viewer"])

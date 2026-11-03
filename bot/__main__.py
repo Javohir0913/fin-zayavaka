@@ -19,8 +19,11 @@ async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     if not config.BOT_TOKEN:
         sys.exit("BOT_TOKEN topilmadi: .env.example faylidan .env yarating va tokenni yozing.")
-    if not config.ADMIN_IDS:
-        logging.warning("ADMIN_IDS bo'sh — hech kim admin bo'lmaydi. .env ga o'z Telegram ID ingizni yozing.")
+    if not config.SUPERADMIN_ID:
+        logging.warning("ADMIN_IDS bo'sh — super admin yo'q. .env ga o'z Telegram ID ingizni yozing.")
+    if config.EXTRA_ADMIN_IDS:
+        logging.warning("ADMIN_IDS da bir nechta ID bor — super admin faqat birinchisi (%s). Qolganlari e'tiborsiz: %s",
+                        config.SUPERADMIN_ID, config.EXTRA_ADMIN_IDS)
 
     await db.init()
     bot = Bot(config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))

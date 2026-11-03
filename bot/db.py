@@ -3,8 +3,8 @@ import os
 
 import aiosqlite
 
-from .config import ADMIN_IDS, DB_PATH, DEFAULT_CURRENCIES
-from .utils import now_str
+from .config import DB_PATH, DEFAULT_CURRENCIES, SUPERADMIN_ID
+from .utils import ROLES, now_str
 
 _db: aiosqlite.Connection | None = None
 
@@ -70,6 +70,8 @@ async def init(path: str = DB_PATH) -> None:
     _db.row_factory = aiosqlite.Row
     await _db.execute("PRAGMA journal_mode=WAL")
     await _db.executescript(SCHEMA)
+    from .audit import SCHEMA as AUDIT_SCHEMA
+    await _db.executescript(AUDIT_SCHEMA)
     count = await fetchval("SELECT COUNT(*) FROM currencies")
     if not count:
         for i, code in enumerate(DEFAULT_CURRENCIES):
@@ -118,25 +120,31 @@ async def set_setting(key: str, value: str) -> None:
 # ---------------------------------------------------------------- users
 async def upsert_user(uid: int, full_name: str, username: str | None) -> tuple[dict, bool]:
     """Foydalanuvchini qo'shadi/yangilaydi. (user, is_new) qaytaradi."""
+    from . import audit  # aylanma importdan qochish uchun
     user = await get_user(uid)
     is_new = user is None
     if is_new:
-        role = "superadmin" if uid in ADMIN_IDS else "pending"
+        role = "superadmin" if uid == SUPERADMIN_ID else "pending"
         await execute(
             "INSERT INTO users(id, full_name, username, role, created_at) VALUES(?,?,?,?,?)",
             uid, full_name, username, role, now_str(),
         )
+        await audit.write(None, "user", uid, "registered", "role", None, ROLES.get(role, role), label=full_name)
     else:
         changes = {}
         if user["full_name"] != full_name or user["username"] != username:
             changes.update(full_name=full_name, username=username)
-        if uid in ADMIN_IDS and user["role"] != "superadmin":
+        # Super admin faqat bitta — .env dagi ADMIN_IDS ning birinchisi
+        if uid == SUPERADMIN_ID and user["role"] != "superadmin":
             changes["role"] = "superadmin"
-        elif uid not in ADMIN_IDS and user["role"] == "superadmin":
+        elif uid != SUPERADMIN_ID and user["role"] == "superadmin":
             changes["role"] = "admin"  # .env dan olib tashlangan super admin oddiy admin bo'ladi
         if changes:
             sets = ", ".join(f"{k}=?" for k in changes)
             await execute(f"UPDATE users SET {sets} WHERE id=?", *changes.values(), uid)
+            if "role" in changes:
+                await audit.write(None, "user", uid, "role_changed", "role", ROLES.get(user["role"], user["role"]),
+                                  ROLES.get(changes["role"], changes["role"]), label=full_name)
     return await get_user(uid), is_new
 
 

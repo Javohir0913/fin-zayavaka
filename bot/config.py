@@ -9,10 +9,12 @@ load_dotenv(BASE_DIR / ".env")
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 
-# Bot ishga tushganda avtomatik admin bo'ladigan Telegram ID lar (vergul bilan)
-ADMIN_IDS = {
-    int(x) for x in os.getenv("ADMIN_IDS", "").replace(" ", "").split(",") if x.strip().lstrip("-").isdigit()
-}
+# Super admin — FAQAT BITTA: ADMIN_IDS dagi birinchi Telegram ID.
+# (Qolgan ID lar e'tiborsiz qoldiriladi; adminlarni super admin bot/ilova orqali tayinlaydi.)
+_ADMIN_LIST = [int(x) for x in os.getenv("ADMIN_IDS", "").replace(" ", "").split(",") if x.lstrip("-").isdigit()]
+SUPERADMIN_ID: int | None = _ADMIN_LIST[0] if _ADMIN_LIST else None
+EXTRA_ADMIN_IDS = _ADMIN_LIST[1:]
+ADMIN_IDS = {SUPERADMIN_ID} if SUPERADMIN_ID else set()
 
 DB_PATH = os.getenv("DB_PATH", str(BASE_DIR / "data" / "expenses.db"))
 TZ = ZoneInfo(os.getenv("TIMEZONE", "Asia/Tashkent"))

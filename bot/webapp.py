@@ -11,13 +11,12 @@ from aiogram.types import BufferedInputFile
 from aiogram.utils.web_app import safe_parse_webapp_init_data
 from aiohttp import web
 
-from . import db, reports, services
+from . import audit, db, reports, services
 from .config import BASE_CURRENCY, BOT_TOKEN, WEB_HOST, WEB_PORT
 
-from .notify import notify
 from .rates import get_rates, to_base
 from .render import fmt_field_value
-from .utils import (FIELD_TYPES, PERMS, allowed_roles, can, e, fmt_amount, fmt_date, parse_date,
+from .utils import (FIELD_TYPES, PERMS, allowed_roles, can, e, fmt_amount, fmt_date,
                     role_change_error, today)
 
 log = logging.getLogger(__name__)
@@ -315,9 +314,8 @@ async def create_request(request: web.Request):
                 raise ApiError(400, "required", f["name"])
             continue
         extra[str(f["id"])] = v
-    rid = await db.create_request(user["id"], core["title"], core["amount"], core["currency"],
-                                  core["needed_date"], core["comment"], extra)
-    await services.after_create(request.app[BOT_KEY], rid, user["id"])
+    rid = await services.create_request(request.app[BOT_KEY], user, core["title"], core["amount"], core["currency"],
+                                        core["needed_date"], core["comment"], extra)
     _, fmap = await fields_map()
     return ok({"request": serialize(await db.get_request(rid), user, fmap)}, status=201)
 
@@ -342,7 +340,7 @@ async def edit_request(request: web.Request):
                 old, new = fmt_amount(old), fmt_amount(new)
             elif k == "needed_date":
                 old, new = fmt_date(old), fmt_date(new)
-            changes.append(f"{labels[k]}: {old or '—'} → {new or '—'}")
+            changes.append((labels[k], old, new))
     if isinstance(data.get("extra"), dict):
         extra = dict(r["extra"])
         for fid, raw in data["extra"].items():
@@ -356,20 +354,14 @@ async def edit_request(request: web.Request):
                 raise ApiError(400, "required", f["name"])
             if extra.get(str(fid)) == v:
                 continue
-            changes.append(f"{f['name']}: {fmt_field_value(f, extra.get(str(fid)))} → {fmt_field_value(f, v)}")
+            changes.append((f["name"], fmt_field_value(f, extra.get(str(fid))), fmt_field_value(f, v)))
             if v is None:
                 extra.pop(str(fid), None)
             else:
                 extra[str(fid)] = v
         if extra != r["extra"]:
             upd["extra"] = extra
-    if upd:
-        await db.update_request(r["id"], **upd)
-        details = "; ".join(changes)[:1000]
-        await db.add_history(r["id"], user["id"], "edited", details)
-        if r["user_id"] != user["id"]:
-            await notify(request.app[BOT_KEY], [r["user_id"]],
-                         f"✏️ Zayavkangiz <b>#{r['id']}</b> tahrirlandi:\n{e(details)}\n\nKo'rish: /r{r['id']}")
+    await services.edit_request(request.app[BOT_KEY], user, r, upd, changes)
     rates, _ = await get_rates()
     return ok({"request": serialize(await db.get_request(r["id"]), user, fmap, rates), "changed": bool(upd)})
 
@@ -382,18 +374,18 @@ async def request_action(request: web.Request):
     bot = request.app[BOT_KEY]
     if action == "approve":
         need(user, "decide")
-        done = await services.approve(bot, r["id"], user["id"])
+        done = await services.approve(bot, r["id"], user)
     elif action == "reject":
         need(user, "decide")
         reason = str((await body(request)).get("reason") or "").strip()[:500]
-        done = await services.reject(bot, r["id"], user["id"], reason)
+        done = await services.reject(bot, r["id"], user, reason)
     elif action == "cancel":
         if r["user_id"] != user["id"]:
             raise ApiError(403, "forbidden")
-        done = await services.cancel(r["id"], user["id"])
+        done = await services.cancel(r["id"], user)
     else:
         need(user, "admin")
-        done = await services.reopen(bot, r["id"], user["id"])
+        done = await services.reopen(bot, r["id"], user)
     if not done:
         raise ApiError(409, "already_decided")
     _, fmap = await fields_map()
@@ -538,19 +530,7 @@ async def admin_set_role(request: web.Request):
     err = role_change_error(me_, target, role)
     if err:
         raise ApiError(400 if err == "bad_role" else 403, err)
-    if target["role"] != role:
-        await db.set_role(uid, role)
-        from .keyboards import main_menu
-        from .utils import ROLES
-        target["role"] = role
-        bot = request.app[BOT_KEY]
-        try:
-            if role == "blocked":
-                await bot.send_message(uid, "⛔ Sizning kirishingiz bloklandi.")
-            else:
-                await bot.send_message(uid, f"🎉 Sizga rol berildi: <b>{ROLES[role]}</b>", reply_markup=main_menu(target))
-        except Exception:
-            pass
+    await services.set_role(request.app[BOT_KEY], me_, target, role)
     return ok({"user": await db.get_user(uid)})
 
 
@@ -585,7 +565,7 @@ async def admin_add_field(request: web.Request):
     opts = _options(data.get("options")) if ftype == "choice" else []
     if ftype == "choice" and len(opts) < 2:
         raise ApiError(400, "need_options")
-    fid = await db.add_field(name, ftype, opts, bool(data.get("required")))
+    fid = await services.add_field(request["user"], name, ftype, opts, bool(data.get("required")))
     return ok({"field": await db.get_field(fid)}, status=201)
 
 
@@ -613,16 +593,18 @@ async def admin_edit_field(request: web.Request):
             raise ApiError(400, "need_options")
         upd["options"] = opts
     if upd:
-        await db.update_field(fid, **upd)
+        await services.update_field(request["user"], f, **upd)
     if data.get("move") == "up":
-        await db.move_field_up(fid)
+        await services.move_field_up(request["user"], f)
     return ok({"field": await db.get_field(fid)})
 
 
 @routes.delete("/api/admin/fields/{fid}")
 async def admin_delete_field(request: web.Request):
     need(request["user"], "admin")
-    await db.delete_field(int(request.match_info["fid"]))
+    f = await db.get_field(int(request.match_info["fid"]))
+    if f:
+        await services.delete_field(request["user"], f)
     return ok()
 
 
@@ -638,7 +620,7 @@ async def admin_add_currency(request: web.Request):
     code = str((await body(request)).get("code") or "").strip().upper()
     if not re.fullmatch(r"[A-Z]{3}", code):
         raise ApiError(400, "bad_currency")
-    await db.add_currency(code)
+    await services.add_currency(request["user"], code)
     return ok({"items": await db.list_currencies(active_only=False)})
 
 
@@ -649,8 +631,48 @@ async def admin_toggle_currency(request: web.Request):
     active = await db.list_currencies(active_only=True)
     if len(active) == 1 and active[0]["code"] == code:
         raise ApiError(400, "last_currency")
-    await db.toggle_currency(code)
+    await services.toggle_currency(request["user"], code)
     return ok({"items": await db.list_currencies(active_only=False)})
+
+
+# ---------------------------------------------------------------- audit log
+def _audit_row(r: dict) -> dict:
+    return {k: r[k] for k in ("id", "created_at", "actor_id", "actor_name", "entity", "entity_id", "entity_label",
+                              "action", "field", "old_value", "new_value", "deleted", "deleted_at", "restored_at")}
+
+
+@routes.get("/api/audit")
+async def audit_list(request: web.Request):
+    """Admin: faol yozuvlar. Super admin: o'chirilganlar (deleted=Y) ham."""
+    user = request["user"]
+    need(user, "admin")
+    deleted = request.query.get("deleted", "N")
+    if deleted not in ("N", "Y", "all"):
+        deleted = "N"
+    if deleted != "N":
+        need(user, "manage_admins")
+    try:
+        offset = max(0, int(request.query.get("offset", 0)))
+    except ValueError:
+        offset = 0
+    rows, total = await audit.query(request.query.get("entity") or None, deleted, request.query.get("q", "")[:100],
+                                    request.query.get("entity_id") or None, offset, 30)
+    return ok({"items": [_audit_row(r) for r in rows], "total": total, "offset": offset, "page": 30,
+               "retention_days": audit.RETENTION_DAYS})
+
+
+@routes.post("/api/audit/{lid}/deleted")
+async def audit_set_deleted(request: web.Request):
+    """Super admin: deleted = Y (yashirish) yoki N (tiklash)."""
+    user = request["user"]
+    need(user, "manage_admins")
+    value = str((await body(request)).get("value", "")).upper()
+    if value not in ("Y", "N"):
+        raise ApiError(400, "bad_value")
+    if not await audit.set_deleted(int(request.match_info["lid"]), value == "Y", user):
+        raise ApiError(409, "no_change")
+    row = await db.fetchone("SELECT * FROM audit_log WHERE id=?", int(request.match_info["lid"]))
+    return ok({"item": _audit_row(row)})
 
 
 # ---------------------------------------------------------------- statik

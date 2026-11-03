@@ -5,12 +5,11 @@ from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from .. import db
+from .. import db, services
 from ..fieldinput import ask_field, parse_field_callback, parse_field_message
-from ..keyboards import (BTN_NEW, btn, cancel_kb, currency_kb, date_kb, decision_kb, ikb,
+from ..keyboards import (BTN_NEW, btn, cancel_kb, currency_kb, date_kb, ikb,
                          main_menu)
-from ..notify import notify
-from ..render import fmt_field_value, render_body, render_card
+from ..render import fmt_field_value, render_body
 from ..states import NewReq
 from ..utils import e, fmt_amount, parse_amount, parse_date, today
 
@@ -199,10 +198,9 @@ async def _confirm(msg: Message, state: FSMContext):
 async def send_request(cb: CallbackQuery, state: FSMContext, user: dict, bot: Bot):
     data = await state.get_data()
     await state.clear()
-    rid = await db.create_request(user["id"], data["title"], data["amount"], data["currency"],
-                                  data["needed_date"], data.get("comment", ""), data.get("extra", {}))
-    await db.add_history(rid, user["id"], "created")
     await cb.message.edit_reply_markup(reply_markup=None)
+    rid = await services.create_request(bot, user, data["title"], data["amount"], data["currency"],
+                                        data["needed_date"], data.get("comment", ""), data.get("extra", {}))
     await cb.answer("Yuborildi")
     await cb.message.answer(
         f"✅ Zayavka <b>#{rid}</b> yuborildi!\n"
@@ -210,10 +208,6 @@ async def send_request(cb: CallbackQuery, state: FSMContext, user: dict, bot: Bo
         f"Ko'rish: /r{rid}",
         reply_markup=main_menu(user),
     )
-    req = await db.get_request(rid)
-    fields = await db.list_fields()
-    approvers = [i for i in await db.user_ids_by_roles(["approver", "admin", "superadmin"]) if i != user["id"]]
-    await notify(bot, approvers, "🆕 <b>Yangi zayavka!</b>\n\n" + render_card(req, fields), decision_kb(rid))
 
 
 @router.callback_query(NewReq.confirm, F.data == "ncancel")
