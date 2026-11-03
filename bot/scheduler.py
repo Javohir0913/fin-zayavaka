@@ -5,7 +5,7 @@ from datetime import datetime
 
 from aiogram import Bot
 
-from . import audit, db, reports
+from . import audit, db, rates, reports
 from .config import REPORT_HOUR, TZ
 from .notify import notify
 
@@ -17,6 +17,8 @@ async def scheduler_loop(bot: Bot) -> None:
         try:
             now = datetime.now(TZ)
             today = now.date().isoformat()
+            # Yangi kun boshlanganda shu kunning kurs qatorlari darhol paydo bo'lsin (yengil COUNT so'rovi)
+            await rates.ensure_today()
             # Audit log: 3 oydan eski yozuvlar deleted='Y' (kuniga bir marta, jismonan o'chirilmaydi)
             if await db.get_setting("last_audit_purge") != today:
                 await db.set_setting("last_audit_purge", today)

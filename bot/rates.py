@@ -121,6 +121,7 @@ async def load_saved() -> None:
 
 async def refresh_loop() -> None:
     await load_saved()
+    await ensure_today()  # ishga tushganda bugungi kun kursi darhol yozilsin (kesh yangi bo'lsa ham)
     while True:
         age = time.time() - _cache["ts"]
         if age >= REFRESH_EVERY or len(_cache["rates"]) <= 1:
