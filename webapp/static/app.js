@@ -1096,6 +1096,7 @@
     app.innerHTML = `<div class="center-screen"><div class="login">
       <div class="ill bg-primary">${ic("telegram")}</div>
       <div class="seg login-lang" id="llang">${[["uz", "O'zbekcha"], ["ru", "Русский"], ["en", "English"]].map(([c, n]) => `<button class="${S.lang === c ? "on" : ""}" data-l="${c}">${n}</button>`).join("")}</div>
+      <div class="seg login-theme" id="ltheme">${["auto", "light", "dark"].map((m) => `<button class="${S.themePref === m ? "on" : ""}" data-m="${m}">${t("th_" + m)}</button>`).join("")}</div>
       <h2>${t("login_t")}</h2><p>${t("login_hint")}</p>
       <div id="tgw" class="tgw"><div class="spinner"></div></div>
       ${errCode ? `<p class="err-msg" style="display:block">${esc(errText({ code: errCode }))}</p>` : ""}
@@ -1104,6 +1105,11 @@
     document.getElementById("llang").onclick = (e) => {
       const b = e.target.closest("[data-l]"); if (!b || b.dataset.l === S.lang) return;
       S.lang = b.dataset.l; store.set("lang", S.lang); document.documentElement.lang = S.lang; showLogin(errCode);
+    };
+    document.getElementById("ltheme").onclick = (e) => {
+      const b = e.target.closest("[data-m]"); if (!b) return;
+      S.themePref = b.dataset.m; store.set("theme", S.themePref); applyTheme();
+      document.querySelectorAll("#ltheme button").forEach((x) => x.classList.toggle("on", x === b));
     };
     let cfg = {};
     try { cfg = await api("GET", "/api/auth/config"); } catch (_) { /* tarmoq */ }

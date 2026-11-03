@@ -458,4 +458,5 @@ textarea.input { min-height: 84px; resize: vertical; }
 .login a { color: var(--primary); font-weight: 650; text-decoration: none; }
 .topbar .wback { flex: none; padding: 6px 8px; }
 .topbar .wback + * { margin-right: auto; }
-.login .login-lang { margin: 0 auto 22px; }
+.login .login-lang { margin: 0 auto 10px; }
+.login .login-theme { margin: 0 auto 22px; }
