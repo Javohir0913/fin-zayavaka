@@ -951,13 +951,40 @@
   // ------------------------------------------------------------ ADMIN: users
   async function screenUsers(id) {
     app.innerHTML = `<div class="screen no-tabs"><div class="topbar"><h1>${t("users")}</h1></div>${skeleton(6)}</div>`;
-    const d = await api("GET", "/api/admin/users");
+    let d = await api("GET", "/api/admin/users");
     if (!alive(id)) return;
     const roleCls = { superadmin: "bg-danger", admin: "bg-primary", approver: "bg-success", viewer: "bg-warning", user: "s-cancelled", pending: "bg-danger", blocked: "s-cancelled" };
-    app.innerHTML = `<div class="screen no-tabs"><div class="topbar"><h1>${t("users")}</h1><span class="muted">${d.items.length}</span></div>
-      <div class="card menu">${d.items.map((u) => `<button class="mi" data-act="role" data-u="${u.id}"><span class="avatar sm">${initials(u.full_name)}</span>
-        <span class="tx"><b>${esc(u.full_name || u.id)}</b><small>${u.username ? "@" + esc(u.username) + " · " : ""}${t("n_requests", { n: u.req_count })}</small></span>
-        <span class="badge ${roleCls[u.role]}">${t("r_" + u.role)}</span></button>`).join("")}</div></div>`;
+    // Oxirgi faollik: "Onlayn" yoki "5 daq. oldin" + qayerdan (Mini App / brauzer / bot)
+    const seen = (u) => {
+      if (u.online) return `<span class="on-txt">${t("online")}</span>`;
+      if (!u.last_seen) return t("never_seen");
+      const s = d.now - u.last_seen;
+      const ago = s < 3600 ? t("ago_min", { n: Math.max(1, Math.floor(s / 60)) }) : s < 86400 ? t("ago_hour", { n: Math.floor(s / 3600) })
+        : s < 7 * 86400 ? t("ago_day", { n: Math.floor(s / 86400) }) : fmtDate(new Date(u.last_seen * 1000).toISOString().slice(0, 10));
+      return ago;
+    };
+    const draw = () => {
+      const list = S.usersOnline ? d.items.filter((u) => u.online) : d.items;
+      app.innerHTML = `<div class="screen no-tabs"><div class="topbar"><h1>${t("users")}</h1><span class="muted">${d.items.length}</span></div>
+      <div class="seg" id="uonl"><button class="${S.usersOnline ? "" : "on"}" data-o="">${t("all_users")}</button><button class="${S.usersOnline ? "on" : ""}" data-o="1"><span class="odot"></span>${t("online_now", { n: d.online })}</button></div>
+      ${list.length ? `<div class="card menu mt12">${list.map((u) => `<button class="mi" data-act="role" data-u="${u.id}"><span class="avatar sm ${u.online ? "is-online" : ""}">${initials(u.full_name)}</span>
+        <span class="tx"><b>${esc(u.full_name || u.id)}</b><small>${u.username ? "@" + esc(u.username) + " · " : ""}${t("n_requests", { n: u.req_count })}</small>
+          <small class="seen">${seen(u)}${u.last_via ? " · " + t("via_" + u.last_via) : ""}</small></span>
+        <span class="badge ${roleCls[u.role]}">${t("r_" + u.role)}</span></button>`).join("")}</div>`
+        : `<div class="empty card mt12"><b>${t("nobody_online")}</b></div>`}</div>`;
+      if (!inTg) webBack();
+      app.querySelector("#uonl").onclick = (e) => {
+        const b = e.target.closest("[data-o]"); if (!b) return;
+        S.usersOnline = !!b.dataset.o; draw();
+      };
+    };
+    draw();
+    // Sahifa ochiq turganda har 30 soniyada yangilab turamiz
+    const timer = setInterval(async () => {
+      if (!alive(id)) { clearInterval(timer); return; }
+      if (document.hidden || document.getElementById("sh")) return; // rol tanlash oynasi ochiq bo'lsa — tegmaymiz
+      try { const nd = await api("GET", "/api/admin/users"); if (alive(id)) { d = nd; draw(); } } catch (_) { /* keyingi safar */ }
+    }, 30000);
     S.acts.role = (b) => {
       const u = d.items.find((x) => String(x.id) === b.dataset.u);
       // Server bilan bir xil qoida (bot/utils.py: role_change_error)

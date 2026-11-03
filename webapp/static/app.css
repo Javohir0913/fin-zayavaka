@@ -557,3 +557,10 @@ textarea.input { min-height: 84px; resize: vertical; }
 .topbar h1 { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .topbar > .btn { flex: none; white-space: nowrap; }
 @media (max-width: 480px) { .hide-sm { display: none; } }
+
+/* Kim onlayn */
+.avatar.is-online { position: relative; overflow: visible; }
+.avatar.is-online::after { content: ""; position: absolute; right: -1px; bottom: -1px; width: 10px; height: 10px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 2px var(--surface, var(--bg)); }
+.odot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--success); margin-right: 6px; vertical-align: 1px; }
+.mi .seen { color: var(--muted); }
+.mi .seen .on-txt { color: var(--success); font-weight: 650; }

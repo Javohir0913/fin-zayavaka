@@ -11,7 +11,7 @@ from aiogram.types import BufferedInputFile
 from aiogram.utils.web_app import safe_parse_webapp_init_data
 from aiohttp import web
 
-from . import audit, db, inbox, reports, services, webauth
+from . import audit, db, inbox, presence, reports, services, webauth
 from . import rates as rates_mod
 from .config import BASE_CURRENCY, BOT_TOKEN, WEB_HOST, WEB_PORT
 
@@ -225,6 +225,7 @@ async def auth_mw(request: web.Request, handler):
         request["lang"] = lang
         if user["role"] in ("pending", "blocked") and request.path != "/api/me":
             raise ApiError(403, user["role"])
+        await presence.touch(user["id"], "app" if auth.startswith("tma ") else "web")
         return await handler(request)
     except ApiError as ex:
         return web.json_response({"error": ex.code, "message": ex.message}, status=ex.status,
@@ -603,7 +604,11 @@ async def export(request: web.Request):
 @routes.get("/api/admin/users")
 async def admin_users(request: web.Request):
     need(request["user"], "admin")
-    return ok({"items": await db.list_users(0, 1000)})
+    items = await db.list_users(0, 1000)
+    now = int(time.time())
+    for u in items:
+        u["online"] = presence.is_online(u.get("last_seen"), now)
+    return ok({"items": items, "now": now, "online": sum(u["online"] for u in items)})
 
 
 @routes.post("/api/admin/users/{uid}/role")

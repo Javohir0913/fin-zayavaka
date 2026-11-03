@@ -3,7 +3,7 @@ from typing import Any, Awaitable, Callable
 from aiogram import BaseMiddleware
 from aiogram.types import CallbackQuery, Message, TelegramObject
 
-from . import db, services
+from . import db, presence, services
 from .keyboards import MENU_BUTTONS
 
 
@@ -20,6 +20,8 @@ class AuthMiddleware(BaseMiddleware):
 
         user, is_new = await db.upsert_user(tg_user.id, tg_user.full_name, tg_user.username)
         data["user"] = user
+        if user["role"] not in ("pending", "blocked"):
+            await presence.touch(tg_user.id, "bot")
 
         if is_new and user["role"] == "pending":
             await services.notify_new_user(data["bot"], tg_user.id, tg_user.full_name, tg_user.username)

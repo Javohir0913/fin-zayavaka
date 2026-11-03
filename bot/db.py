@@ -115,6 +115,12 @@ async def _migrate() -> None:
         await _db.execute("ALTER TABLE requests ADD COLUMN rate_day TEXT")
     # Kurs kuni = zayavka kiritilgan kun
     await _db.execute("UPDATE requests SET rate_day = substr(created_at, 1, 10) WHERE rate_day IS NULL")
+    # Kim onlayn (bot/presence.py): oxirgi faollik (unix soniya) va qayerdan — app / web / bot
+    ucols = {r[1] for r in await (await _db.execute("PRAGMA table_info(users)")).fetchall()}
+    if "last_seen" not in ucols:
+        await _db.execute("ALTER TABLE users ADD COLUMN last_seen INTEGER")
+    if "last_via" not in ucols:
+        await _db.execute("ALTER TABLE users ADD COLUMN last_via TEXT")
 
 
 async def close() -> None:
