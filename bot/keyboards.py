@@ -131,9 +131,9 @@ def list_kb(items: list[dict], scope: str, status: str, page: int, total: int, p
     return ikb(rows)
 
 
-def role_assign_kb(uid: int) -> InlineKeyboardMarkup:
-    b = [btn(ROLES[r], f"adm:r:{uid}:{r}") for r in ASSIGNABLE_ROLES]
-    return ikb([b[:2], b[2:4], b[4:]])
+def role_assign_kb(uid: int, roles: list[str] | None = None) -> InlineKeyboardMarkup:
+    b = [btn(ROLES[r], f"adm:r:{uid}:{r}") for r in (roles or ASSIGNABLE_ROLES)]
+    return ikb([b[i:i + 2] for i in range(0, len(b), 2)])
 
 
 def yes_no_kb(yes: str, no: str) -> InlineKeyboardMarkup:

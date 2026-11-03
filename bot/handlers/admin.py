@@ -10,7 +10,7 @@ from .. import db
 from ..keyboards import BTN_ADMIN, abort_row, btn, ikb, main_menu, role_assign_kb
 from ..notify import notify
 from ..states import AddCurrency, AddField, EditOptions, RenameField
-from ..utils import ASSIGNABLE_ROLES, FIELD_TYPES, ROLES, can, e, short
+from ..utils import FIELD_TYPES, ROLE_ERRORS, ROLES, allowed_roles, can, e, role_change_error, short
 
 router = Router(name="admin")
 
@@ -79,7 +79,7 @@ async def users_list(cb: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("adm:u:"))
-async def user_card(cb: CallbackQuery):
+async def user_card(cb: CallbackQuery, user: dict):
     uid = int(cb.data.split(":")[2])
     u = await db.get_user(uid)
     if not u:
@@ -87,8 +87,16 @@ async def user_card(cb: CallbackQuery):
         return
     uname = f"@{e(u['username'])}" if u["username"] else "—"
     text = (f"👤 <b>{e(u['full_name'])}</b>\nUsername: {uname}\nID: <code>{u['id']}</code>\n"
-            f"Rol: <b>{ROLES[u['role']]}</b>\n\nYangi rolni tanlang:")
-    kb = role_assign_kb(uid)
+            f"Rol: <b>{ROLES[u['role']]}</b>\n\n")
+    # Faqat shu admin haqiqatan bera oladigan rollar ko'rsatiladi
+    roles = [r for r in allowed_roles(user) if r != u["role"] and role_change_error(user, u, r) is None]
+    if roles:
+        text += "Yangi rolni tanlang:"
+        kb = role_assign_kb(uid, roles)
+    else:
+        err = role_change_error(user, u, "user") or "forbidden"
+        text += f"🔒 {ROLE_ERRORS[err]}."
+        kb = ikb([])
     kb.inline_keyboard.append([btn("⬅️ Ro'yxatga", "adm:users:0")])
     await _safe_edit(cb.message, text, kb)
     await cb.answer()
@@ -98,15 +106,13 @@ async def user_card(cb: CallbackQuery):
 async def set_role(cb: CallbackQuery, user: dict, bot: Bot):
     _, _, uid, role = cb.data.split(":")
     uid = int(uid)
-    if role not in ASSIGNABLE_ROLES:
-        await cb.answer()
-        return
-    if uid == user["id"] and role != "admin":
-        await cb.answer("O'zingizdan admin huquqini olib bo'lmaydi", show_alert=True)
-        return
     target = await db.get_user(uid)
     if not target:
         await cb.answer("Topilmadi", show_alert=True)
+        return
+    err = role_change_error(user, target, role)
+    if err:
+        await cb.answer(ROLE_ERRORS[err], show_alert=True)
         return
     old = target["role"]
     await db.set_role(uid, role)

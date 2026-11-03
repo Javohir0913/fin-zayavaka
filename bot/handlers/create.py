@@ -212,7 +212,7 @@ async def send_request(cb: CallbackQuery, state: FSMContext, user: dict, bot: Bo
     )
     req = await db.get_request(rid)
     fields = await db.list_fields()
-    approvers = [i for i in await db.user_ids_by_roles(["approver", "admin"]) if i != user["id"]]
+    approvers = [i for i in await db.user_ids_by_roles(["approver", "admin", "superadmin"]) if i != user["id"]]
     await notify(bot, approvers, "🆕 <b>Yangi zayavka!</b>\n\n" + render_card(req, fields), decision_kb(rid))
 
 

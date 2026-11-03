@@ -22,7 +22,7 @@ async def scheduler_loop(bot: Bot) -> None:
             if now.hour >= REPORT_HOUR and await db.get_setting("last_daily_report") != today:
                 await db.set_setting("last_daily_report", today)
                 text = await reports.short_report()
-                ids = await db.user_ids_by_roles(["admin", "approver", "viewer"])
+                ids = await db.user_ids_by_roles(["superadmin", "admin", "approver", "viewer"])
                 sent = await notify(bot, ids, "🌅 <b>Kunlik hisobot</b>\n\n" + text)
                 log.info("Kunlik hisobot yuborildi: %s ta", sent)
         except asyncio.CancelledError:

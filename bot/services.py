@@ -2,16 +2,27 @@
 from aiogram import Bot
 
 from . import db
-from .keyboards import decision_kb
+from .keyboards import decision_kb, role_assign_kb
 from .notify import notify
 from .render import render_card
+from .utils import allowed_roles, e
+
+
+async def notify_new_user(bot: Bot, uid: int, full_name: str, username: str | None) -> None:
+    """Yangi foydalanuvchi haqida: super adminlarga barcha rollar, adminlarga — admin rolisiz."""
+    uname = f" @{e(username)}" if username else ""
+    text = f"🆕 <b>Yangi foydalanuvchi</b>\n{e(full_name)}{uname}\nID: <code>{uid}</code>\n\nRol tanlang:"
+    supers = await db.user_ids_by_roles(["superadmin"])
+    admins = await db.user_ids_by_roles(["admin"])
+    await notify(bot, supers, text, role_assign_kb(uid, allowed_roles({"role": "superadmin"})))
+    await notify(bot, admins, text, role_assign_kb(uid, allowed_roles({"role": "admin"})))
 
 
 async def after_create(bot: Bot, rid: int, author_id: int) -> None:
     await db.add_history(rid, author_id, "created")
     req = await db.get_request(rid)
     fields = await db.list_fields()
-    approvers = [i for i in await db.user_ids_by_roles(["approver", "admin"]) if i != author_id]
+    approvers = [i for i in await db.user_ids_by_roles(["approver", "admin", "superadmin"]) if i != author_id]
     await notify(bot, approvers, "🆕 <b>Yangi zayavka!</b>\n\n" + render_card(req, fields), decision_kb(rid))
 
 

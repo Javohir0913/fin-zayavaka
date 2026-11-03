@@ -121,7 +121,7 @@ async def upsert_user(uid: int, full_name: str, username: str | None) -> tuple[d
     user = await get_user(uid)
     is_new = user is None
     if is_new:
-        role = "admin" if uid in ADMIN_IDS else "pending"
+        role = "superadmin" if uid in ADMIN_IDS else "pending"
         await execute(
             "INSERT INTO users(id, full_name, username, role, created_at) VALUES(?,?,?,?,?)",
             uid, full_name, username, role, now_str(),
@@ -130,8 +130,10 @@ async def upsert_user(uid: int, full_name: str, username: str | None) -> tuple[d
         changes = {}
         if user["full_name"] != full_name or user["username"] != username:
             changes.update(full_name=full_name, username=username)
-        if uid in ADMIN_IDS and user["role"] != "admin":
-            changes["role"] = "admin"
+        if uid in ADMIN_IDS and user["role"] != "superadmin":
+            changes["role"] = "superadmin"
+        elif uid not in ADMIN_IDS and user["role"] == "superadmin":
+            changes["role"] = "admin"  # .env dan olib tashlangan super admin oddiy admin bo'ladi
         if changes:
             sets = ", ".join(f"{k}=?" for k in changes)
             await execute(f"UPDATE users SET {sets} WHERE id=?", *changes.values(), uid)
@@ -149,7 +151,7 @@ async def set_role(uid: int, role: str) -> None:
 async def list_users(offset: int = 0, limit: int = 50) -> list[dict]:
     return await fetchall(
         """SELECT u.*, (SELECT COUNT(*) FROM requests r WHERE r.user_id=u.id) AS req_count
-           FROM users u ORDER BY CASE u.role WHEN 'pending' THEN 0 WHEN 'admin' THEN 1 WHEN 'approver' THEN 2
+           FROM users u ORDER BY CASE u.role WHEN 'pending' THEN 0 WHEN 'superadmin' THEN 1 WHEN 'admin' THEN 1 WHEN 'approver' THEN 2
            WHEN 'viewer' THEN 3 WHEN 'user' THEN 4 ELSE 5 END, u.full_name LIMIT ? OFFSET ?""",
         limit, offset,
     )

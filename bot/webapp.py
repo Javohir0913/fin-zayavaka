@@ -13,11 +13,12 @@ from aiohttp import web
 
 from . import db, reports, services
 from .config import BASE_CURRENCY, BOT_TOKEN, WEB_HOST, WEB_PORT
-from .keyboards import role_assign_kb
+
 from .notify import notify
 from .rates import get_rates, to_base
 from .render import fmt_field_value
-from .utils import ASSIGNABLE_ROLES, FIELD_TYPES, PERMS, can, e, fmt_amount, fmt_date, parse_date, today
+from .utils import (FIELD_TYPES, PERMS, allowed_roles, can, e, fmt_amount, fmt_date, parse_date,
+                    role_change_error, today)
 
 log = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).resolve().parent.parent / "webapp"
@@ -203,11 +204,7 @@ async def auth_mw(request: web.Request, handler):
         full_name = " ".join(x for x in (tg.first_name, tg.last_name) if x) or str(tg.id)
         user, is_new = await db.upsert_user(tg.id, full_name, tg.username)
         if is_new and user["role"] == "pending":
-            admins = await db.user_ids_by_roles(["admin"])
-            uname = f" @{e(tg.username)}" if tg.username else ""
-            await notify(request.app[BOT_KEY], admins,
-                         f"🆕 <b>Yangi foydalanuvchi</b>\n{e(full_name)}{uname}\nID: <code>{tg.id}</code>\n\nRol tanlang:",
-                         role_assign_kb(tg.id))
+            await services.notify_new_user(request.app[BOT_KEY], tg.id, full_name, tg.username)
         request["user"] = user
         request["lang"] = tg.language_code or "uz"
         if user["role"] in ("pending", "blocked") and request.path != "/api/me":
@@ -242,6 +239,7 @@ async def me(request: web.Request):
         "base": BASE_CURRENCY,
         "today": today().isoformat(),
         "field_types": list(FIELD_TYPES),
+        "assignable_roles": allowed_roles(user),
     })
 
 
@@ -534,13 +532,12 @@ async def admin_set_role(request: web.Request):
     need(me_, "admin")
     uid = int(request.match_info["uid"])
     role = (await body(request)).get("role")
-    if role not in ASSIGNABLE_ROLES:
-        raise ApiError(400, "bad_role")
-    if uid == me_["id"] and role != "admin":
-        raise ApiError(400, "self_demote")
     target = await db.get_user(uid)
     if not target:
         raise ApiError(404, "not_found")
+    err = role_change_error(me_, target, role)
+    if err:
+        raise ApiError(400 if err == "bad_role" else 403, err)
     if target["role"] != role:
         await db.set_role(uid, role)
         from .keyboards import main_menu

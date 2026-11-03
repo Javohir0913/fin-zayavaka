@@ -3,10 +3,8 @@ from typing import Any, Awaitable, Callable
 from aiogram import BaseMiddleware
 from aiogram.types import CallbackQuery, Message, TelegramObject
 
-from . import db
-from .keyboards import MENU_BUTTONS, role_assign_kb
-from .notify import notify
-from .utils import e
+from . import db, services
+from .keyboards import MENU_BUTTONS
 
 
 class AuthMiddleware(BaseMiddleware):
@@ -24,13 +22,7 @@ class AuthMiddleware(BaseMiddleware):
         data["user"] = user
 
         if is_new and user["role"] == "pending":
-            admins = await db.user_ids_by_roles(["admin"])
-            uname = f" @{e(tg_user.username)}" if tg_user.username else ""
-            await notify(
-                data["bot"], admins,
-                f"🆕 <b>Yangi foydalanuvchi</b>\n{e(tg_user.full_name)}{uname}\nID: <code>{tg_user.id}</code>\n\nRol tanlang:",
-                role_assign_kb(tg_user.id),
-            )
+            await services.notify_new_user(data["bot"], tg_user.id, tg_user.full_name, tg_user.username)
 
         if user["role"] in ("pending", "blocked"):
             if isinstance(event, Message) and (event.text or "").startswith("/start"):

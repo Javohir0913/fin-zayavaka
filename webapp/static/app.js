@@ -779,14 +779,18 @@
     app.innerHTML = `<div class="screen no-tabs"><div class="topbar"><h1>${t("users")}</h1></div>${skeleton(6)}</div>`;
     const d = await api("GET", "/api/admin/users");
     if (!alive(id)) return;
-    const roleCls = { admin: "bg-primary", approver: "bg-success", viewer: "bg-warning", user: "s-cancelled", pending: "bg-danger", blocked: "s-cancelled" };
+    const roleCls = { superadmin: "bg-danger", admin: "bg-primary", approver: "bg-success", viewer: "bg-warning", user: "s-cancelled", pending: "bg-danger", blocked: "s-cancelled" };
     app.innerHTML = `<div class="screen no-tabs"><div class="topbar"><h1>${t("users")}</h1><span class="muted">${d.items.length}</span></div>
       <div class="card menu">${d.items.map((u) => `<button class="mi" data-act="role" data-u="${u.id}"><span class="avatar sm">${initials(u.full_name)}</span>
         <span class="tx"><b>${esc(u.full_name || u.id)}</b><small>${u.username ? "@" + esc(u.username) + " · " : ""}${t("n_requests", { n: u.req_count })}</small></span>
         <span class="badge ${roleCls[u.role]}">${t("r_" + u.role)}</span></button>`).join("")}</div></div>`;
     S.acts.role = (b) => {
       const u = d.items.find((x) => String(x.id) === b.dataset.u);
-      sheet(`<h3>${esc(u.full_name)}</h3><p>${t("change_role")}</p><div class="card menu">${["user", "approver", "viewer", "admin", "blocked"].map((r) => `<button class="mi" data-r="${r}"><span class="tx"><b>${t("r_" + r)}</b></span>${u.role === r ? ic("check", 'class="chev" style="color:var(--primary)"') : ""}</button>`).join("")}</div>`, (sh) => {
+      // Server bilan bir xil qoida (bot/utils.py: role_change_error)
+      const lock = u.role === "superadmin" ? "protected" : u.id === S.me.user.id ? "self_role"
+        : (u.role === "admin" && !can("manage_admins")) ? "super_only" : null;
+      if (lock) { toast(t("e_" + lock), true); return; }
+      sheet(`<h3>${esc(u.full_name)}</h3><p>${t("change_role")}</p><div class="card menu">${(S.me.assignable_roles || []).map((r) => `<button class="mi" data-r="${r}"><span class="tx"><b>${t("r_" + r)}</b></span>${u.role === r ? ic("check", 'class="chev" style="color:var(--primary)"') : ""}</button>`).join("")}</div>`, (sh) => {
         sh.onclick = async (e) => {
           const rb = e.target.closest("[data-r]"); if (!rb) return;
           try { await api("POST", `/api/admin/users/${u.id}/role`, { role: rb.dataset.r }); closeSheet(); toast(t("saved_ok")); route(); }

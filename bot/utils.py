@@ -12,6 +12,7 @@ STATUS = {
 STATUS_EMOJI = {"pending": "⏳", "approved": "✅", "rejected": "❌", "cancelled": "🚫"}
 
 ROLES = {
+    "superadmin": "⭐ Super admin",
     "admin": "👑 Admin",
     "approver": "🛡 Tasdiqlovchi",
     "viewer": "👁 Kuzatuvchi (buxgalter)",
@@ -19,16 +20,51 @@ ROLES = {
     "pending": "🕓 Ruxsat kutmoqda",
     "blocked": "⛔ Bloklangan",
 }
+# Bot/ilova orqali beriladigan rollar. Super admin faqat .env dagi ADMIN_IDS orqali.
 ASSIGNABLE_ROLES = ["user", "approver", "viewer", "admin", "blocked"]
 
 # Rol -> ruxsatlar
 PERMS = {
-    "create": {"user", "approver", "viewer", "admin"},
-    "view_all": {"approver", "viewer", "admin"},
-    "decide": {"approver", "admin"},
-    "analytics": {"approver", "viewer", "admin"},
-    "admin": {"admin"},
+    "create": {"user", "approver", "viewer", "admin", "superadmin"},
+    "view_all": {"approver", "viewer", "admin", "superadmin"},
+    "decide": {"approver", "admin", "superadmin"},
+    "analytics": {"approver", "viewer", "admin", "superadmin"},
+    "admin": {"admin", "superadmin"},
+    "manage_admins": {"superadmin"},   # admin rolini berish/olish
 }
+ADMIN_ROLES = ["superadmin", "admin"]
+
+ROLE_ERRORS = {
+    "forbidden": "Ruxsat yo'q",
+    "bad_role": "Noto'g'ri rol",
+    "protected": "Super admin rolini o'zgartirib bo'lmaydi",
+    "self_role": "O'z rolingizni o'zgartira olmaysiz",
+    "super_only": "Admin rolini faqat super admin beradi va oladi",
+}
+
+
+def allowed_roles(actor: dict) -> list[str]:
+    """actor boshqalarga bera oladigan rollar."""
+    if can(actor, "manage_admins"):
+        return list(ASSIGNABLE_ROLES)
+    if can(actor, "admin"):
+        return [r for r in ASSIGNABLE_ROLES if r != "admin"]
+    return []
+
+
+def role_change_error(actor: dict, target: dict, new_role: str) -> str | None:
+    """Rol o'zgartirish qoidasi (bot va Mini App uchun bitta joyda). None — ruxsat bor."""
+    if not can(actor, "admin"):
+        return "forbidden"
+    if new_role not in ASSIGNABLE_ROLES:
+        return "bad_role"
+    if target["role"] == "superadmin":
+        return "protected"
+    if target["id"] == actor["id"]:
+        return "self_role"
+    if not can(actor, "manage_admins") and (target["role"] == "admin" or new_role == "admin"):
+        return "super_only"
+    return None
 
 FIELD_TYPES = {
     "text": "📝 Matn",
