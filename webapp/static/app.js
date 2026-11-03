@@ -22,6 +22,8 @@
     renderId: 0,
     hops: 0,
     pendingCount: 0,
+    unread: 0,
+    unreadInit: false,
   };
 
   // ------------------------------------------------------------ i18n
@@ -109,6 +111,7 @@
 
   // ------------------------------------------------------------ icons (lucide-style)
   const P = {
+    bell: '<path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
     home: '<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
     list: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
@@ -278,6 +281,7 @@
     [/^#\/admin\/currencies$/, screenCurrencies, false],
     [/^#\/admin\/audit$/, screenAudit, false],
     [/^#\/rates$/, screenRates, false],
+    [/^#\/notifications$/, screenNotifications, false],
   ];
   async function route() {
     closeSheet();
@@ -294,6 +298,7 @@
         try { await fn(id, ...m.slice(1)); }
         catch (e) { if (id === S.renderId) renderError(e); }
         if (!inTg && !top && id === S.renderId) webBack();
+        if (top && id === S.renderId) addBell();
         return;
       }
     }
@@ -306,7 +311,7 @@
     let side = document.getElementById("side");
     if (!side) { side = document.createElement("nav"); side.id = "side"; side.className = "side"; document.body.prepend(side); }
     const act = h.startsWith("#/r/") || h.startsWith("#/edit/") ? "#/requests" : h;
-    const item = (href, icon, label, dot) => `<button class="side-i ${act === href ? "on" : ""}" data-go="${href}">${ic(icon)}<span>${esc(label)}</span>${dot ? `<span class="dotc">${dot > 99 ? "99+" : dot}</span>` : ""}</button>`;
+    const item = (href, icon, label, dot) => `<button class="side-i ${act === href ? "on" : ""}" data-go="${href}">${ic(icon)}<span>${esc(label)}</span>${href === "#/notifications" ? `<span class="dotc bell-dot" ${S.unread ? "" : "hidden"}>${S.unread > 99 ? "99+" : S.unread}</span>` : dot ? `<span class="dotc">${dot > 99 ? "99+" : dot}</span>` : ""}</button>`;
     const u = S.me.user;
     side.innerHTML = `<div class="side-brand"><div class="logo">${ic("coins")}</div><b>${t("app_name")}</b></div>
       <button class="btn btn-primary side-new" data-go="#/new">${ic("plus")} ${t("new_request")}</button>
@@ -314,6 +319,7 @@
         ${item("#/home", "home", t("tab_home"))}
         ${item("#/requests", "list", t("tab_requests"), can("decide") ? S.pendingCount : 0)}
         ${item("#/due", "calendar", t("tab_due"))}
+        ${item("#/notifications", "bell", t("notifications"))}
         ${can("rates_view") ? item("#/rates", "trend", t("rates")) : ""}
       </div>
       ${can("admin") ? `<div class="side-h">${t("admin")}</div><div class="side-g">
@@ -865,6 +871,83 @@
   }
   const menuItem = (href, icon, cls, title, sub) => `<button class="mi" data-go="${href}"><span class="ic ${cls}" style="display:grid;place-items:center">${ic(icon)}</span><span class="tx"><b>${esc(title)}</b><small>${esc(sub || "")}</small></span>${ic("chev", 'class="chev"')}</button>`;
 
+
+  // ------------------------------------------------------------ BILDIRISHNOMALAR (qo'ng'iroqcha)
+  const bellBtn = () => `<button class="btn btn-ghost btn-sm bell" data-go="#/notifications" aria-label="${t("notifications")}">${ic("bell")}<span class="bell-dot" ${S.unread ? "" : "hidden"}>${S.unread > 99 ? "99+" : S.unread}</span></button>`;
+  function paintBadges() {
+    document.querySelectorAll(".bell-dot").forEach((d) => { d.hidden = !S.unread; d.textContent = S.unread > 99 ? "99+" : S.unread; });
+  }
+  // Har bir yuqori darajadagi sahifa sarlavhasiga qo'ng'iroqcha
+  function addBell() {
+    const tb = app.querySelector(".topbar");
+    if (!tb || tb.querySelector(".bell")) return;
+    let tools = tb.querySelector(".tb-tools");
+    if (!tools) {
+      tools = document.createElement("div"); tools.className = "tb-tools";
+      const last = tb.lastElementChild;
+      if (last && last.tagName === "BUTTON") tools.appendChild(last);
+      tb.appendChild(tools);
+    }
+    tools.insertAdjacentHTML("afterbegin", bellBtn());
+  }
+  async function pollUnread() {
+    if (!S.me || document.hidden) return;
+    try {
+      const d = await api("GET", "/api/notifications/unread");
+      if (d.unread > S.unread && S.unreadInit) haptic("light");
+      S.unread = d.unread; S.unreadInit = true; paintBadges();
+    } catch (_) { /* tarmoq — keyingi safar */ }
+  }
+  const N_ICON = { new_request: ["plus", "bg-primary"], approved: ["check", "bg-success"], rejected: ["x", "bg-danger"],
+    edited: ["edit", "bg-warning"], reopened: ["refresh", "bg-primary"], cancelled: ["ban", "s-cancelled"] };
+  async function screenNotifications(id) {
+    app.innerHTML = `<div class="screen no-tabs"><div class="topbar"><h1>${t("notifications")}</h1></div>${skeleton(5)}</div>`;
+    let items = [], more = false;
+    const load = async (before) => {
+      const d = await api("GET", "/api/notifications" + (before ? "?before=" + before : ""));
+      if (!alive(id)) return false;
+      items = items.concat(d.items); more = d.more; S.unread = d.unread; paintBadges();
+      return true;
+    };
+    const draw = () => {
+      app.innerHTML = `<div class="screen no-tabs"><div class="topbar"><h1>${t("notifications")}</h1>
+          ${S.unread ? `<button class="btn btn-ghost btn-sm" data-act="readall" title="${t("mark_all_read")}">${ic("check")}<span class="hide-sm">${t("mark_all_read")}</span></button>` : ""}</div>
+        ${items.length ? `<div class="card menu notif-list">${items.map((n) => {
+          const [icn, cls] = N_ICON[n.kind] || ["bell", "bg-primary"];
+          const d = n.data || {};
+          const sub = [d.amount != null ? `${fmt(d.amount)} ${esc(d.currency || "")}` : "", d.reason ? `${t("reject_reason")}: ${esc(d.reason)}` : "", d.details ? esc(d.details) : ""].filter(Boolean).join(" · ");
+          return `<button class="mi notif ${n.read_at ? "" : "unread"}" data-n="${n.id}" data-r="${n.request_id || ""}">
+            <span class="ic ${cls}" style="display:grid;place-items:center">${ic(icn)}</span>
+            <span class="tx"><b>${t("n_" + n.kind, { who: esc(n.actor_name || "—"), id: n.request_id })}</b>
+              <span class="nt">${esc(d.title || "")}</span>${sub ? `<small>${sub}</small>` : ""}<small class="when">${fmtDT(n.created_at)}</small></span>
+            ${n.read_at ? "" : '<span class="udot"></span>'}</button>`;
+        }).join("")}</div>
+        ${more ? `<button class="btn btn-ghost mt12" data-act="nmore">${t("load_more")}</button>` : ""}`
+        : `<div class="empty card"><div class="ill">${ic("bell")}</div><b>${t("no_notifications")}</b></div>`}</div>`;
+      if (!inTg) webBack();
+      app.querySelectorAll("[data-n]").forEach((b) => {
+        b.onclick = async () => {
+          const n = items.find((x) => String(x.id) === b.dataset.n);
+          if (n && !n.read_at) {
+            n.read_at = "1";
+            api("POST", "/api/notifications/read", { id: n.id }).then((d) => { S.unread = d.unread; paintBadges(); }).catch(() => {});
+          }
+          if (b.dataset.r) location.hash = "#/r/" + b.dataset.r; else draw();
+        };
+      });
+    };
+    S.acts.readall = async (b) => {
+      busy(b, true);
+      try { const d = await api("POST", "/api/notifications/read", {}); S.unread = d.unread; items.forEach((n) => { n.read_at = n.read_at || "1"; }); paintBadges(); draw(); }
+      catch (e) { busy(b, false); toast(errText(e), true); }
+    };
+    S.acts.nmore = async (b) => {
+      busy(b, true);
+      try { if (await load(items[items.length - 1].id)) draw(); } catch (e) { busy(b, false); toast(errText(e), true); }
+    };
+    if (await load()) draw();
+  }
+
   // ------------------------------------------------------------ ADMIN: users
   async function screenUsers(id) {
     app.innerHTML = `<div class="screen no-tabs"><div class="topbar"><h1>${t("users")}</h1></div>${skeleton(6)}</div>`;
@@ -1178,6 +1261,11 @@
     if (role === "blocked") { centerScreen("ban", "bg-danger", t("blocked_t"), t("blocked_hint")); return; }
     window.removeEventListener("hashchange", route);
     window.addEventListener("hashchange", route);
+    await pollUnread();
+    if (!S.pollTimer) {
+      S.pollTimer = setInterval(pollUnread, 30000);
+      document.addEventListener("visibilitychange", () => { if (!document.hidden) pollUnread(); });
+    }
     route();
   }
 

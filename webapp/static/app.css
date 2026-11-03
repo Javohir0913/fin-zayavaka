@@ -538,3 +538,22 @@ textarea.input { min-height: 84px; resize: vertical; }
   .kpi .v { font-size: 19px; }
   .tab { font-size: 10px; }
 }
+
+/* Qo'ng'iroqcha va bildirishnomalar */
+.tb-tools { display: flex; gap: 8px; align-items: center; flex: none; }
+.bell { position: relative; padding: 9px 10px; }
+.bell svg { width: 18px; height: 18px; }
+.bell .bell-dot { position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--danger); color: #fff; font-size: 10.5px; font-weight: 750; display: grid; place-items: center; box-shadow: 0 0 0 2px var(--bg); }
+.bell .bell-dot[hidden], .side-i .bell-dot[hidden] { display: none; }
+.notif { align-items: flex-start; }
+.notif .ic { margin-top: 2px; }
+.notif .tx b { font-weight: 600; white-space: normal; }
+.notif .nt { display: block; font-size: 13.5px; color: var(--text-2); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notif .tx small { white-space: normal; }
+.notif .when { margin-top: 2px; }
+.notif.unread { background: color-mix(in srgb, var(--primary-soft) 55%, transparent); }
+.notif.unread .tx b { font-weight: 750; }
+.notif .udot { width: 9px; height: 9px; border-radius: 50%; background: var(--primary); flex: none; margin-top: 8px; }
+.topbar h1 { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.topbar > .btn { flex: none; white-space: nowrap; }
+@media (max-width: 480px) { .hide-sm { display: none; } }

@@ -11,7 +11,7 @@ from aiogram.types import BufferedInputFile
 from aiogram.utils.web_app import safe_parse_webapp_init_data
 from aiohttp import web
 
-from . import audit, db, reports, services, webauth
+from . import audit, db, inbox, reports, services, webauth
 from . import rates as rates_mod
 from .config import BASE_CURRENCY, BOT_TOKEN, WEB_HOST, WEB_PORT
 
@@ -519,6 +519,33 @@ async def upload(request: web.Request):
         return ok({"kind": "photo", "file_id": m.photo[-1].file_id, "name": name})
     m = await bot.send_document(user["id"], inp, caption=caption, disable_notification=True)
     return ok({"kind": "document", "file_id": m.document.file_id, "name": name})
+
+
+# ---------------------------------------------------------------- bildirishnomalar (qo'ng'iroqcha)
+@routes.get("/api/notifications/unread")
+async def notif_unread(request: web.Request):
+    return ok({"unread": await inbox.unread_count(request["user"]["id"])})
+
+
+@routes.get("/api/notifications")
+async def notif_list(request: web.Request):
+    uid = request["user"]["id"]
+    try:
+        before = int(request.query.get("before") or 0) or None
+    except ValueError:
+        raise ApiError(400, "bad_value")
+    items = await inbox.listing(uid, before)
+    return ok({"items": items, "unread": await inbox.unread_count(uid), "more": len(items) == 30})
+
+
+@routes.post("/api/notifications/read")
+async def notif_read(request: web.Request):
+    data = await body(request)
+    nid = data.get("id")
+    if nid is not None and (not isinstance(nid, int) or isinstance(nid, bool)):
+        raise ApiError(400, "bad_value")
+    await inbox.mark_read(request["user"]["id"], nid)
+    return ok({"unread": await inbox.unread_count(request["user"]["id"])})
 
 
 # ---------------------------------------------------------------- muddatlar

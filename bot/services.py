@@ -5,7 +5,7 @@ bitta joyda yoziladi va bot ham, ilova ham bir xil ishlaydi.
 """
 from aiogram import Bot
 
-from . import audit, db, rates
+from . import audit, db, inbox, rates
 from .keyboards import decision_kb, main_menu, role_assign_kb
 from .notify import notify
 from .render import render_card
@@ -60,6 +60,7 @@ async def create_request(bot: Bot, actor: dict, title: str, amount: float, curre
     req = await db.get_request(rid)
     fields = await db.list_fields()
     approvers = [i for i in await db.user_ids_by_roles(["approver", "admin", "superadmin"]) if i != actor["id"]]
+    await inbox.add(approvers, "new_request", req, actor)
     await notify(bot, approvers, "🆕 <b>Yangi zayavka!</b>\n\n" + render_card(req, fields), decision_kb(rid))
     return rid
 
@@ -73,6 +74,7 @@ async def edit_request(bot: Bot, actor: dict, req: dict, upd: dict, changes: lis
     await db.add_history(req["id"], actor["id"], "edited", details[:1000])
     await audit.write_changes(actor, "request", req["id"], changes, label=_req_label(req))
     if req["user_id"] != actor["id"]:
+        await inbox.add([req["user_id"]], "edited", {**req, **upd}, actor, details=details[:300])
         await notify(bot, [req["user_id"]], f"✏️ Zayavkangiz <b>#{req['id']}</b> tahrirlandi:\n{e(details)}\n\nKo'rish: /r{req['id']}")
 
 
@@ -91,6 +93,7 @@ async def approve(bot: Bot, rid: int, actor: dict) -> bool:
     await _status_change(actor, rid, "pending", "approved", "approved")
     req = await db.get_request(rid)
     if req["user_id"] != actor["id"]:
+        await inbox.add([req["user_id"]], "approved", req, actor)
         fields = await db.list_fields()
         await notify(bot, [req["user_id"]], f"✅ Zayavkangiz <b>#{rid}</b> tasdiqlandi!\n\n" + render_card(req, fields))
     return True
@@ -102,6 +105,7 @@ async def reject(bot: Bot, rid: int, actor: dict, reason: str) -> bool:
     await _status_change(actor, rid, "pending", "rejected", "rejected", reason)
     req = await db.get_request(rid)
     if req["user_id"] != actor["id"]:
+        await inbox.add([req["user_id"]], "rejected", req, actor, reason=(reason or "")[:300])
         fields = await db.list_fields()
         await notify(bot, [req["user_id"]], f"❌ Zayavkangiz <b>#{rid}</b> rad etildi.\n\n" + render_card(req, fields))
     return True
@@ -111,6 +115,10 @@ async def cancel(rid: int, actor: dict) -> bool:
     if not await db.decide(rid, "cancelled", actor["id"]):
         return False
     await _status_change(actor, rid, "pending", "cancelled", "cancelled")
+    # Tasdiqlovchilarga: endi ko'rib chiqish shart emas
+    req = await db.get_request(rid)
+    others = [i for i in await db.user_ids_by_roles(["approver", "admin", "superadmin"]) if i != actor["id"]]
+    await inbox.add(others, "cancelled", req, actor)
     return True
 
 
@@ -120,6 +128,7 @@ async def reopen(bot: Bot, rid: int, actor: dict) -> bool:
         return False
     await _status_change(actor, rid, before["status"], "pending", "reopened")
     if before["user_id"] != actor["id"]:
+        await inbox.add([before["user_id"]], "reopened", before, actor)
         await notify(bot, [before["user_id"]], f"↩️ Zayavkangiz <b>#{rid}</b> qayta ko'rib chiqishga qaytarildi.")
     return True
 
