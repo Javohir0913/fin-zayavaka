@@ -3,6 +3,7 @@
   const tg = window.Telegram && window.Telegram.WebApp;
   // Telegram ichida: initData bilan. Oddiy brauzerda: Telegram Login + HttpOnly cookie sessiya.
   const inTg = !!(tg && tg.initData);
+  if (!inTg) document.documentElement.classList.add("web");
   const app = document.getElementById("app");
 
   // ------------------------------------------------------------ storage
@@ -287,6 +288,7 @@
       const m = h.match(re);
       if (m) {
         if (inTg && tg.BackButton) { top ? tg.BackButton.hide() : tg.BackButton.show(); }
+        renderSide(h);
         S.hops++;
         window.scrollTo(0, 0);
         try { await fn(id, ...m.slice(1)); }
@@ -298,6 +300,32 @@
     location.replace("#/home");
   }
   const alive = (id) => id === S.renderId;
+  // Kompyuter brauzeri: chap tomonda doimiy menyu (telefonda va Telegram ichida pastki tabbar qoladi)
+  function renderSide(h) {
+    if (inTg || !S.me) return;
+    let side = document.getElementById("side");
+    if (!side) { side = document.createElement("nav"); side.id = "side"; side.className = "side"; document.body.prepend(side); }
+    const act = h.startsWith("#/r/") || h.startsWith("#/edit/") ? "#/requests" : h;
+    const item = (href, icon, label, dot) => `<button class="side-i ${act === href ? "on" : ""}" data-go="${href}">${ic(icon)}<span>${esc(label)}</span>${dot ? `<span class="dotc">${dot > 99 ? "99+" : dot}</span>` : ""}</button>`;
+    const u = S.me.user;
+    side.innerHTML = `<div class="side-brand"><div class="logo">${ic("coins")}</div><b>${t("app_name")}</b></div>
+      <button class="btn btn-primary side-new" data-go="#/new">${ic("plus")} ${t("new_request")}</button>
+      <div class="side-g">
+        ${item("#/home", "home", t("tab_home"))}
+        ${item("#/requests", "list", t("tab_requests"), can("decide") ? S.pendingCount : 0)}
+        ${item("#/due", "calendar", t("tab_due"))}
+        ${can("rates_view") ? item("#/rates", "trend", t("rates")) : ""}
+      </div>
+      ${can("admin") ? `<div class="side-h">${t("admin")}</div><div class="side-g">
+        ${item("#/admin/users", "users", t("users"))}
+        ${item("#/admin/fields", "sliders", t("fields"))}
+        ${item("#/admin/currencies", "coins", t("currencies"))}
+        ${item("#/admin/audit", "clock", t("audit"))}
+      </div>` : ""}
+      <div class="side-foot">${item("#/more", "grid", t("settings"))}
+        <div class="side-me"><span class="avatar sm">${initials(u.full_name)}</span><span class="tx"><b>${esc(u.full_name)}</b><small>${t("r_" + u.role)}</small></span></div></div>`;
+  }
+  function removeSide() { const s = document.getElementById("side"); if (s) s.remove(); }
   // Brauzerda Telegram'ning "Orqaga" tugmasi yo'q — sarlavhaga o'zimiznikini qo'yamiz
   function webBack() {
     const tb = app.querySelector(".topbar");
@@ -374,7 +402,7 @@
         ${kpi("wallet", "bg-primary", t("kpi_avg_amount"), d.avg_amount == null ? "—" : fmtShort(d.avg_amount) + `<small>${esc(d.base)}</small>`)}
       </div>
       ${d.total ? `
-      <div class="section"><div class="card chart-card"><h3>${t("dynamics")} <small>${esc(d.base)}</small></h3>${barChart(d.series)}
+      <div class="section wide"><div class="card chart-card"><h3>${t("dynamics")} <small>${esc(d.base)}</small></h3>${barChart(d.series)}
         <div class="legend">${["approved", "pending", "rejected"].map((s) => `<span><i style="background:${STATUS_COLOR[s]}"></i>${t(s)}</span>`).join("")}</div></div></div>
       <div class="section"><div class="card chart-card"><h3>${t("by_status")}</h3>${donut(c)}</div></div>
       ${d.by_currency.length ? `<div class="section"><div class="card chart-card"><h3>${t("by_currency")}</h3>${d.by_currency.map(curRow).join("")}</div></div>` : ""}
@@ -1090,6 +1118,7 @@
   // ------------------------------------------------------------ brauzer: Telegram orqali kirish
   async function showLogin(errCode) {
     window.removeEventListener("hashchange", route);
+    removeSide();
     S.renderId++;
     S.me = null;
     closeSheet();
@@ -1144,6 +1173,7 @@
     try { S.me = await api("GET", "/api/me"); }
     catch (e) { if (e.code !== "login") centerScreen("alert", "bg-danger", errText(e), ""); return; }
     const role = S.me.user.role;
+    if (role === "pending" || role === "blocked") removeSide();
     if (role === "pending") { centerScreen("lock", "bg-warning", t("wait_access"), t("wait_access_hint")); return; }
     if (role === "blocked") { centerScreen("ban", "bg-danger", t("blocked_t"), t("blocked_hint")); return; }
     window.removeEventListener("hashchange", route);
