@@ -36,3 +36,6 @@ WEB_HOST = os.getenv("WEB_HOST", "127.0.0.1")
 WEB_PORT = int(os.getenv("WEB_PORT", "8080"))
 # Tashqaridan ochiladigan HTTPS manzil (masalan, https://xxx.trycloudflare.com). Bo'sh bo'lsa — tugma chiqmaydi
 WEBAPP_URL = os.getenv("WEBAPP_URL", "").strip().rstrip("/")
+
+# Valyuta kurslari uchun exchangerate-api.com kaliti (ixtiyoriy). CBU ochilmasa ishlatiladi.
+EXCHANGERATE_API_KEY = os.getenv("EXCHANGERATE_API_KEY", "").strip()

@@ -13,7 +13,7 @@ from datetime import datetime
 import aiohttp
 
 from . import db
-from .config import BASE_CURRENCY, CBU_URL, TZ
+from .config import BASE_CURRENCY, CBU_URL, EXCHANGERATE_API_KEY, TZ
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +41,18 @@ def _from_usd_table(table: dict) -> dict:
     return {c: uzs_per_usd / float(v) for c, v in table.items() if v}
 
 
+async def _from_exchangerate_api(session) -> tuple[dict, str]:
+    """exchangerate-api.com (API kalit bilan, .env: EXCHANGERATE_API_KEY). Bepul tarif: 1500 so'rov/oy."""
+    if not EXCHANGERATE_API_KEY:
+        raise ValueError("EXCHANGERATE_API_KEY yo'q")
+    data = await _fetch_json(session, f"https://v6.exchangerate-api.com/v6/{EXCHANGERATE_API_KEY}/latest/USD", 6)
+    if data.get("result") != "success":
+        raise ValueError(f"exchangerate-api: {data.get('error-type', 'error')}")
+    table = {k.upper(): v for k, v in data["conversion_rates"].items()}
+    day = datetime.utcfromtimestamp(data.get("time_last_update_unix", time.time())).strftime("%d.%m.%Y")
+    return _from_usd_table(table), day
+
+
 async def _from_er_api(session) -> tuple[dict, str]:
     data = await _fetch_json(session, "https://open.er-api.com/v6/latest/USD", 6)
     if data.get("result") != "success":
@@ -57,7 +69,18 @@ async def _from_jsdelivr(session) -> tuple[dict, str]:
     return _from_usd_table(table), day
 
 
-SOURCES = [("CBU", _from_cbu), ("open.er-api.com", _from_er_api), ("jsdelivr", _from_jsdelivr)]
+SOURCES = [
+    ("CBU", _from_cbu),                              # rasmiy kurs (ba'zi xorijiy serverlardan ochilmaydi)
+    ("exchangerate-api.com", _from_exchangerate_api),  # API kalit bilan — asosiy zaxira
+    ("open.er-api.com", _from_er_api),
+    ("jsdelivr", _from_jsdelivr),
+]
+
+
+def _safe(msg) -> str:
+    """Xato matnidan API kalitni yashiradi (aiohttp xatolarida URL bo'lishi mumkin)."""
+    s = str(msg) or type(msg).__name__
+    return s.replace(EXCHANGERATE_API_KEY, "***") if EXCHANGERATE_API_KEY else s
 
 
 async def refresh() -> bool:
@@ -69,7 +92,7 @@ async def refresh() -> bool:
                 if len(rates) < 3 or "USD" not in rates:
                     raise ValueError("kurslar to'liq emas")
             except Exception as ex:
-                log.warning("Kurs manbasi ishlamadi (%s): %s", name, ex or type(ex).__name__)
+                log.warning("Kurs manbasi ishlamadi (%s): %s", name, _safe(ex))
                 continue
             rates[BASE_CURRENCY] = 1.0
             _cache.update(rates=rates, date=day, source=name, ts=time.time())
