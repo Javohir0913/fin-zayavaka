@@ -8,7 +8,7 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand, MenuButtonCommands, MenuButtonWebApp, WebAppInfo
 
-from . import config, db
+from . import config, db, rates
 from .handlers import routers
 from .middlewares import AuthMiddleware
 from .scheduler import scheduler_loop
@@ -42,10 +42,12 @@ async def main() -> None:
         await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
     runner = await start_web(bot)
     task = asyncio.create_task(scheduler_loop(bot))
+    rates_task = asyncio.create_task(rates.refresh_loop())
     try:
         await dp.start_polling(bot)
     finally:
         task.cancel()
+        rates_task.cancel()
         await runner.cleanup()
         await db.close()
         await bot.session.close()

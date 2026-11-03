@@ -485,7 +485,10 @@ async def due(request: web.Request):
 @routes.get("/api/dashboard")
 async def dashboard(request: web.Request):
     need(request["user"], "analytics")
-    return ok(await reports.dashboard_data(request.query.get("period", "month")))
+    data = await reports.dashboard_data(request.query.get("period", "month"))
+    # Bosh sahifa uchun "qaroringizni kutmoqda" soni — alohida so'rov yubormaslik uchun shu yerda
+    data["pending_total"] = await db.count_requests(None, "pending") if can(request["user"], "decide") else 0
+    return ok(data)
 
 
 @routes.get("/api/summary")

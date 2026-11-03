@@ -414,3 +414,6 @@ textarea.input { min-height: 84px; resize: vertical; }
 .day-h span { color: var(--muted); font-size: 13px; font-weight: 600; }
 .spinner { width: 22px; height: 22px; border: 2.5px solid var(--primary-soft); border-top-color: var(--primary); border-radius: 50%; animation: spin .7s linear infinite; margin: 24px auto; }
 @keyframes spin { to { transform: rotate(360deg); } }
+.screen.home { transition: opacity .15s; }
+.screen.loading > :not(.topbar):not(#period) { opacity: .45; pointer-events: none; }
+.screen.loading #period::after { content: ""; }

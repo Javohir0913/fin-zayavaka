@@ -303,16 +303,29 @@
     const head = `<div class="topbar"><div style="display:flex;gap:12px;align-items:center"><div class="avatar">${initials(S.me.user.full_name)}</div><div><div class="sub">${t("hello")} 👋</div><h1 style="font-size:20px">${name}</h1></div></div>
       <button class="btn btn-ghost btn-sm" data-go="#/more" aria-label="${t("settings")}">${ic("globe", 'width="16" height="16"')} ${S.lang.toUpperCase()}</button></div>`;
     if (!can("analytics")) return homeSimple(id, head);
-    app.innerHTML = `<div class="screen">${head}${periodSeg()}<div class="mt16 skel" style="height:170px;border-radius:24px"></div><div class="mt16">${skeleton(3)}</div></div>${tabbar("home")}`;
-    const d = await api("GET", "/api/dashboard?period=" + S.period);
+    // Kesh: avval oxirgi ma'lumotni darhol ko'rsatamiz, keyin fonda yangilaymiz
+    S.dash = S.dash || {};
+    const cached = S.dash[S.period];
+    const screen = app.querySelector(".screen.home");
+    if (cached) renderHome(cached);
+    else if (screen) { // davr almashtirildi: sahifani skeletonga aylantirmay, faqat xiralashtiramiz
+      screen.classList.add("loading");
+      screen.querySelectorAll("#period button").forEach((b) => b.classList.toggle("on", b.dataset.p === S.period));
+    } else {
+      app.innerHTML = `<div class="screen home">${head}${periodSeg()}<div class="mt16 skel" style="height:170px;border-radius:24px"></div><div class="mt16">${skeleton(3)}</div></div>${tabbar("home")}`;
+      bindPeriod();
+    }
+    const fresh = await api("GET", "/api/dashboard?period=" + S.period);
+    S.dash[fresh.period] = fresh;
     if (!alive(id)) return;
-    S.pendingCount = d.count.pending;
-    const pend = can("decide") ? await api("GET", "/api/requests?scope=all&status=pending").then((x) => x.total).catch(() => 0) : 0;
-    if (!alive(id)) return;
+    renderHome(fresh);
+
+    function renderHome(d) {
+    const pend = d.pending_total || 0;
     S.pendingCount = pend;
     const c = d.count;
     const decided = c.approved + c.rejected;
-    app.innerHTML = `<div class="screen">${head}
+    app.innerHTML = `<div class="screen home">${head}
       ${pend ? `<button class="card pad item" style="margin-bottom:14px" data-act="toPending"><div class="cur bg-warning">${ic("clock", 'width="20" height="20"')}</div><div class="mid"><div class="t">${t("pending_review")}</div><div class="m">${t("to_review", { n: pend })}</div></div>${ic("chev", 'class="chev" width="18" height="18" style="color:var(--muted)"')}</button>` : ""}
       ${periodSeg()}
       <div class="hero mt16">
@@ -354,13 +367,18 @@
       catch (e) { toast(errText(e), true); }
       busy(btn, false);
     };
+    }
   }
   function periodSeg() {
     return `<div class="seg" id="period">${["today", "week", "month", "pmonth", "year", "all"].map((p) => `<button class="${S.period === p ? "on" : ""}" data-p="${p}">${t("p_" + p)}</button>`).join("")}</div>`;
   }
   function bindPeriod() {
     const seg = document.getElementById("period");
-    if (seg) seg.onclick = (e) => { const b = e.target.closest("[data-p]"); if (!b) return; haptic("select"); S.period = b.dataset.p; store.set("period", S.period); route(); };
+    if (seg) seg.onclick = (e) => {
+      const b = e.target.closest("[data-p]"); if (!b || b.dataset.p === S.period) return;
+      haptic("select"); S.period = b.dataset.p; store.set("period", S.period);
+      screenHome(++S.renderId).catch((er) => toast(errText(er), true)); // butun sahifani qayta chizmasdan
+    };
     const on = seg && seg.querySelector(".on"); if (on) on.scrollIntoView({ inline: "center", block: "nearest" });
   }
   const kpi = (icon, cls, k, v, sub) => `<div class="card kpi"><div class="k"><span class="ic ${cls}">${ic(icon)}</span>${k}</div><div class="v num">${v}</div>${sub ? `<div class="muted" style="font-size:12px">${sub}</div>` : ""}</div>`;
