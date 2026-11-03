@@ -163,13 +163,13 @@
   function applyTheme() {
     let mode = S.themePref;
     if (mode === "auto") {
-      mode = tg && tg.colorScheme ? tg.colorScheme : (window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      mode = inTg && tg.colorScheme ? tg.colorScheme : (window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
     }
     document.documentElement.dataset.theme = mode;
     const bg = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
     const surface = getComputedStyle(document.documentElement).getPropertyValue("--surface").trim();
     try {
-      if (tg) {
+      if (inTg) {
         tg.setHeaderColor && tg.setHeaderColor(bg);
         tg.setBackgroundColor && tg.setBackgroundColor(bg);
         tg.setBottomBarColor && tg.setBottomBarColor(surface);
