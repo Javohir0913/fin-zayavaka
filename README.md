@@ -131,7 +131,15 @@ Qoida bitta joyda: `bot/utils.py → role_change_error()` — bot va Mini App bi
 Har bir o'zgarish `audit_log` jadvaliga yoziladi: **kim, qachon, nimani, oldin → keyin**
 (zayavka maydonlari, holat, rad sababi, rollar, qo'shimcha maydonlar, valyutalar, yangi foydalanuvchilar).
 
-- **3 oy** (90 kun) dan eski yozuvlar har kuni avtomatik `deleted = 'Y'` bo'ladi — **bazadan o'chirilmaydi**.
-- Super admin istalgan yozuvni `Y` (yashirish) yoki `N` (tiklash) qila oladi. Tiklangan yozuv qayta avto-o'chirilmaydi.
-- Ko'rish: Mini App → **Yana → O'zgarishlar tarixi** (adminlar — faol yozuvlar; super admin — `Y` lar ham).
+- **3 oy** (90 kun) dan eski yozuvlar har kuni avtomatik `deleted = 'Y'` (arxiv) bo'ladi — **bazadan o'chirilmaydi**.
+- Tarixni **qo'lda o'chirish imkoniyati yo'q** — hech kim, super admin ham.
+- Super admin arxivdagi (`Y`) yozuvni `N` ga tiklay oladi; tiklashning o'zi ham tarixga alohida yozuv bo'lib tushadi
+  (kim, qachon, qaysi yozuvni). Tiklangan yozuv qayta avto-arxivlanmaydi.
+- Ko'rish: Mini App → **Yana → O'zgarishlar tarixi** (adminlar — faol yozuvlar; super admin — arxiv ham).
+
+## 🔎 Qidiruv
+
+Zayavkalar va tarix qidiruvi (`bot/search.py`): katta/kichik harf farqsiz (kirillda ham), `o'` = `o‘` = `oʻ`,
+`2 500 000` = `2500000`, bir nechta so'z istalgan tartibda (`ofis printer`), maqsad, izoh, muallif, username,
+valyuta, summa, qo'shimcha maydon qiymatlari va rad sababi bo'yicha. `#12` — aynan 12-ID.
 - Hamma o'zgarishlar `bot/services.py` orqali o'tadi, shuning uchun log hech bir yo'lda tushib qolmaydi.

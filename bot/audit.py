@@ -1,13 +1,13 @@
 """Audit log — tizimdagi har bir o'zgarish: kim, qachon, nimani, oldin -> keyin.
 
 Yozuvlar hech qachon jismonan o'chirilmaydi: 3 oydan eskilari deleted='Y' deb belgilanadi
-(super admin qayta tiklashi mumkin — deleted='N', shundan keyin avtomatik o'chirilmaydi).
+(super admin qayta tiklashi mumkin). Qo'lda o'chirish imkoniyati yo'q.
 """
 import json
 import logging
 from datetime import datetime, timedelta
 
-from . import db
+from . import db, search
 from .config import TZ
 from .utils import now_str
 
@@ -15,7 +15,7 @@ log = logging.getLogger(__name__)
 
 RETENTION_DAYS = 90
 
-ENTITIES = ("request", "user", "field", "currency")
+ENTITIES = ("request", "user", "field", "currency", "audit")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS audit_log(
@@ -89,15 +89,19 @@ async def purge_old(now: datetime | None = None) -> int:
     return cur.rowcount
 
 
-async def set_deleted(log_id: int, deleted: bool, by: dict) -> bool:
-    if deleted:
-        cur = await db.execute("UPDATE audit_log SET deleted='Y', deleted_at=? WHERE id=? AND deleted='N'", now_str(), log_id)
-    else:
-        cur = await db.execute(
-            "UPDATE audit_log SET deleted='N', deleted_at=NULL, restored_by=?, restored_at=? WHERE id=? AND deleted='Y'",
-            by["id"], now_str(), log_id,
-        )
-    return cur.rowcount > 0
+async def restore(log_id: int, by: dict) -> bool:
+    """Avtomatik deleted='Y' bo'lgan yozuvni qaytaradi (N). Tarixni qo'lda o'chirish imkoniyati yo'q.
+    Tiklashning o'zi ham tarixga alohida yozuv bo'lib tushadi (kim, qachon, qaysi yozuvni)."""
+    row = await db.fetchone("SELECT * FROM audit_log WHERE id=?", log_id)
+    if not row or row["deleted"] != "Y":
+        return False
+    await db.execute(
+        "UPDATE audit_log SET deleted='N', deleted_at=NULL, restored_by=?, restored_at=? WHERE id=? AND deleted='Y'",
+        by["id"], now_str(), log_id,
+    )
+    summary = f"#{log_id} · {row['actor_name']} · {row['action']}" + (f" · {row['field']}" if row["field"] else "")
+    await write(by, "audit", log_id, "restored", "deleted", "Y", "N", label=summary)
+    return True
 
 
 def _where(entity: str | None, deleted: str, q: str, entity_id: str | None):
@@ -111,11 +115,10 @@ def _where(entity: str | None, deleted: str, q: str, entity_id: str | None):
     if deleted in ("Y", "N"):
         conds.append("deleted=?")
         args.append(deleted)
-    q = (q or "").strip()
-    if q:
-        like = f"%{q}%"
-        conds.append("(actor_name LIKE ? OR entity_label LIKE ? OR field LIKE ? OR old_value LIKE ? OR new_value LIKE ? OR entity_id=?)")
-        args += [like, like, like, like, like, q.lstrip("#")]
+    cond, cargs = search.build(q, search.AUDIT_HAYSTACK, "entity_id")
+    if cond:
+        conds.append(cond)
+        args += cargs
     return (" WHERE " + " AND ".join(conds)) if conds else "", args
 
 

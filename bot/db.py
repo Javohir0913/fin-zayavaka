@@ -4,6 +4,7 @@ import os
 import aiosqlite
 
 from .config import DB_PATH, DEFAULT_CURRENCIES, SUPERADMIN_ID
+from . import search
 from .utils import ROLES, now_str
 
 _db: aiosqlite.Connection | None = None
@@ -72,6 +73,9 @@ async def init(path: str = DB_PATH) -> None:
     await _db.executescript(SCHEMA)
     from .audit import SCHEMA as AUDIT_SCHEMA
     await _db.executescript(AUDIT_SCHEMA)
+    # Qidiruv uchun Python funksiyalari (kirill registri, apostroflar, raqamlar) — bot/search.py
+    await _db.create_function("norm", 1, search.norm, deterministic=True)
+    await _db.create_function("json_values", 1, search.json_values, deterministic=True)
     count = await fetchval("SELECT COUNT(*) FROM currencies")
     if not count:
         for i, code in enumerate(DEFAULT_CURRENCIES):
@@ -299,15 +303,10 @@ async def reopen(rid: int) -> bool:
 
 def _where(user_id: int | None, status: str | None, q: str = "") -> tuple[str, list]:
     conds, args = [], []
-    q = (q or "").strip()
-    if q:
-        if q.lstrip("#").isdigit():
-            conds.append("(r.id=? OR r.title LIKE ?)")
-            args += [int(q.lstrip("#")), f"%{q}%"]
-        else:
-            like = f"%{q}%"
-            conds.append("(r.title LIKE ? OR r.comment LIKE ? OR r.user_id IN (SELECT id FROM users WHERE full_name LIKE ?))")
-            args += [like, like, like]
+    cond, cargs = search.build(q, search.REQUEST_HAYSTACK, "r.id")
+    if cond:
+        conds.append(cond)
+        args += cargs
     if user_id:
         conds.append("r.user_id=?")
         args.append(user_id)
@@ -326,7 +325,7 @@ async def list_requests(user_id: int | None, status: str | None, offset: int, li
 
 async def count_requests(user_id: int | None, status: str | None, q: str = "") -> int:
     where, args = _where(user_id, status, q)
-    return await fetchval("SELECT COUNT(*) FROM requests r" + where, *args)
+    return await fetchval("SELECT COUNT(*) FROM requests r LEFT JOIN users u ON u.id = r.user_id" + where, *args)
 
 
 async def requests_created_between(start: str | None, end: str | None) -> list[dict]:

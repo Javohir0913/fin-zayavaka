@@ -661,15 +661,13 @@ async def audit_list(request: web.Request):
                "retention_days": audit.RETENTION_DAYS})
 
 
-@routes.post("/api/audit/{lid}/deleted")
-async def audit_set_deleted(request: web.Request):
-    """Super admin: deleted = Y (yashirish) yoki N (tiklash)."""
+@routes.post("/api/audit/{lid}/restore")
+async def audit_restore(request: web.Request):
+    """Super admin: 3 oydan keyin avtomatik deleted='Y' bo'lgan yozuvni tiklaydi (N).
+    Tarixni qo'lda o'chirish (Y qilish) imkoniyati ataylab yo'q."""
     user = request["user"]
     need(user, "manage_admins")
-    value = str((await body(request)).get("value", "")).upper()
-    if value not in ("Y", "N"):
-        raise ApiError(400, "bad_value")
-    if not await audit.set_deleted(int(request.match_info["lid"]), value == "Y", user):
+    if not await audit.restore(int(request.match_info["lid"]), user):
         raise ApiError(409, "no_change")
     row = await db.fetchone("SELECT * FROM audit_log WHERE id=?", int(request.match_info["lid"]))
     return ok({"item": _audit_row(row)})

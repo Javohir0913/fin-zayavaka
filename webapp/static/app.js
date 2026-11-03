@@ -459,20 +459,21 @@
     const scope = document.getElementById("scope");
     if (scope) scope.onclick = (e) => { const b = e.target.closest("[data-s]"); if (!b || b.dataset.s === L.scope) return; haptic("select"); L.scope = b.dataset.s; route(); };
     let tm;
-    document.getElementById("q").oninput = (e) => { clearTimeout(tm); tm = setTimeout(() => { L.q = e.target.value; load(true); }, 300); };
-    document.getElementById("stf").onclick = (e) => { const b = e.target.closest("[data-st]"); if (!b) return; haptic("select"); L.status = b.dataset.st; load(true); };
+    document.getElementById("q").oninput = (e) => { clearTimeout(tm); tm = setTimeout(() => { L.q = e.target.value; load(true).catch((er) => toast(errText(er), true)); }, 300); };
+    document.getElementById("stf").onclick = (e) => { const b = e.target.closest("[data-st]"); if (!b) return; haptic("select"); L.status = b.dataset.st; load(true).catch((er) => toast(errText(er), true)); };
     let items = [];
+    let seq = 0;  // faqat eng oxirgi so'rov javobi ko'rsatiladi (tez yozganda eski javob ustiga yozmasin)
     async function load(reset) {
       const offset = reset ? 0 : items.length;
-      const myId = S.renderId;
+      const my = ++seq;
       if (reset) document.getElementById("lst").innerHTML = skeleton(4);
       const d = await api("GET", `/api/requests?scope=${L.scope}&status=${L.status}&q=${encodeURIComponent(L.q)}&offset=${offset}`);
-      if (!alive(id) || myId !== S.renderId) return;
+      if (!alive(id) || my !== seq) return;
       items = reset ? d.items : items.concat(d.items);
       if (L.scope === "all" && L.status === "pending" && !L.q) S.pendingCount = d.total;
       document.getElementById("stf").innerHTML = ["all", "pending", "approved", "rejected", "cancelled"].map((s) => `<button class="chip ${L.status === s ? "on" : ""}" data-st="${s}">${t(s)} <span class="cnt">${d.counts[s]}</span></button>`).join("");
       document.getElementById("lst").innerHTML = items.length ? items.map((r) => itemHtml(r, L.scope === "all")).join("")
-        : `<div class="empty card"><div class="ill">${ic(L.q ? "search" : "inbox")}</div><b>${t("empty_list")}</b>${L.scope === "my" && !L.q ? t("empty_hint") : ""}</div>`;
+        : `<div class="empty card"><div class="ill">${ic(L.q ? "search" : "inbox")}</div><b>${t(L.q ? "nothing_found" : "empty_list")}</b>${L.q ? t("search_hint") : L.scope === "my" ? t("empty_hint") : ""}</div>`;
       document.getElementById("more").innerHTML = items.length < d.total ? `<button class="btn btn-ghost mt12" data-act="more">${t("load_more")}</button>` : "";
     }
     S.acts.more = async (b) => { busy(b, true); try { await load(false); } catch (e) { toast(errText(e), true); busy(b, false); } };
@@ -865,9 +866,9 @@
     S.audit = S.audit || { entity: "", deleted: "N", q: "" };
     const A = S.audit;
     if (!isSuper) A.deleted = "N";
-    const ENT = [["", "ent_all"], ["request", "ent_request"], ["user", "ent_user"], ["field", "ent_field"], ["currency", "ent_currency"]];
-    const ENT_ICON = { request: "file", user: "user", field: "sliders", currency: "coins" };
-    const ENT_CLS = { request: "bg-primary", user: "bg-warning", field: "bg-success", currency: "bg-warning" };
+    const ENT = [["", "ent_all"], ["request", "ent_request"], ["user", "ent_user"], ["field", "ent_field"], ["currency", "ent_currency"], ["audit", "ent_audit"]];
+    const ENT_ICON = { request: "file", user: "user", field: "sliders", currency: "coins", audit: "undo" };
+    const ENT_CLS = { request: "bg-primary", user: "bg-warning", field: "bg-success", currency: "bg-warning", audit: "bg-danger" };
     app.innerHTML = `<div class="screen no-tabs">
       <div class="topbar"><div><h1>${t("audit")}</h1><div class="sub" id="ahint"></div></div></div>
       ${isSuper ? `<div class="seg" id="adel">${[["N", "a_active"], ["Y", "a_deleted"], ["all", "a_all"]].map(([v, k]) => `<button class="${A.deleted === v ? "on" : ""}" data-v="${v}">${t(k)}</button>`).join("")}</div>` : ""}
@@ -888,20 +889,20 @@
           <div class="aud-t"><b>${esc(r.actor_name || "—")}</b> <span class="muted">· ${t("act_" + r.action) === "act_" + r.action ? esc(r.action) : t("act_" + r.action)}</span><div class="muted aud-d">${fmtDT(r.created_at)} · ${target}</div></div>
           ${del ? `<span class="badge s-rejected">deleted: Y</span>` : ""}</div>
         ${change}
-        ${isSuper ? `<div class="aud-a">${del
-          ? `<span class="muted">${t("deleted_at")}: ${fmtDT(r.deleted_at)}</span><button class="btn btn-ghost btn-sm" data-act="flag" data-id="${r.id}" data-v="N">${ic("undo")} ${t("restore")}</button>`
-          : `${r.restored_at ? `<span class="muted">${t("restored")}: ${fmtDT(r.restored_at)}</span>` : "<span></span>"}<button class="btn btn-ghost btn-sm" data-act="flag" data-id="${r.id}" data-v="Y" style="color:var(--danger)">${ic("trash")} ${t("mark_deleted")}</button>`}</div>` : ""}
+        ${del ? `<div class="aud-a"><span class="muted">${t("deleted_at")}: ${fmtDT(r.deleted_at)}</span>${isSuper ? `<button class="btn btn-ghost btn-sm" data-act="restore" data-id="${r.id}">${ic("undo")} ${t("restore")}</button>` : ""}</div>`
+          : r.restored_at ? `<div class="aud-a"><span class="muted">${t("restored")}: ${fmtDT(r.restored_at)}</span></div>` : ""}
       </div>`;
     }
+    let seq = 0;  // faqat eng oxirgi so'rov javobi ko'rsatiladi (tez yozganda eski javob ustiga yozmasin)
     async function load(reset) {
-      const myId = S.renderId;
+      const my = ++seq;
       if (reset) { items = []; document.getElementById("alst").innerHTML = skeleton(4); }
-      const d = await api("GET", `/api/audit?entity=${A.entity}&deleted=${A.deleted}&q=${encodeURIComponent(A.q)}&offset=${items.length}`);
-      if (!alive(id) || myId !== S.renderId) return;
+      const d = await api("GET", `/api/audit?entity=${A.entity}&deleted=${A.deleted}&q=${encodeURIComponent(A.q)}&offset=${reset ? 0 : items.length}`);
+      if (!alive(id) || my !== seq) return;
       items = items.concat(d.items);
       document.getElementById("ahint").textContent = t("audit_hint", { n: d.retention_days }) + " · " + d.total;
       document.getElementById("alst").innerHTML = items.length ? items.map(row).join("")
-        : `<div class="empty card"><div class="ill">${ic("clock")}</div><b>${t("audit_empty")}</b></div>`;
+        : `<div class="empty card"><div class="ill">${ic("clock")}</div><b>${t(A.q ? "nothing_found" : "audit_empty")}</b>${A.q ? t("search_hint") : ""}</div>`;
       document.getElementById("amore").innerHTML = items.length < d.total ? `<button class="btn btn-ghost mt12" data-act="amore">${t("load_more")}</button>` : "";
     }
     const seg = document.getElementById("adel");
@@ -910,17 +911,12 @@
     let tm;
     document.getElementById("aq").oninput = (e) => { clearTimeout(tm); tm = setTimeout(() => { A.q = e.target.value; load(true).catch((er) => toast(errText(er), true)); }, 300); };
     S.acts.amore = async (b) => { busy(b, true); try { await load(false); } catch (er) { busy(b, false); toast(errText(er), true); } };
-    S.acts.flag = async (b) => {
-      const v = b.dataset.v;
-      if (v === "Y" && !(await confirmSheet(t("confirm_mark_deleted"), t("mark_deleted"), true))) return;
+    S.acts.restore = async (b) => {
       busy(b, true);
       try {
-        const res = await api("POST", `/api/audit/${b.dataset.id}/deleted`, { value: v });
-        const i = items.findIndex((x) => x.id === res.item.id);
-        if (i >= 0) items[i] = res.item;
-        if (A.deleted !== "all") items = items.filter((x) => x.deleted === A.deleted);
-        document.getElementById("alst").innerHTML = items.length ? items.map(row).join("") : `<div class="empty card"><div class="ill">${ic("clock")}</div><b>${t("audit_empty")}</b></div>`;
-        toast(v === "N" ? t("restored") : t("saved_ok"));
+        await api("POST", `/api/audit/${b.dataset.id}/restore`);
+        toast(t("restored"));
+        await load(true);  // tiklash yozuvining o'zi ham ro'yxatga tushadi
       } catch (er) { busy(b, false); toast(errText(er), true); }
     };
     await load(true);
