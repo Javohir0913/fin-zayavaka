@@ -27,7 +27,9 @@
   function pickLang() {
     const saved = store.get("lang");
     if (saved && I18N[saved]) return saved;
-    const code = ((tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.language_code) || navigator.language || "uz").slice(0, 2);
+    // Telegram ichida — Telegram tili; brauzerda — o'zbekcha (brauzer tiliga qaramaymiz, tanlash tugmasi bor)
+    const tgLang = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData && window.Telegram.WebApp.initDataUnsafe.user && window.Telegram.WebApp.initDataUnsafe.user.language_code;
+    const code = (tgLang || "uz").slice(0, 2);
     return I18N[code] ? code : (code === "be" || code === "uk" || code === "kk" ? "ru" : "uz");
   }
   S.lang = pickLang();
@@ -1093,11 +1095,16 @@
     closeSheet();
     app.innerHTML = `<div class="center-screen"><div class="login">
       <div class="ill bg-primary">${ic("telegram")}</div>
+      <div class="seg login-lang" id="llang">${[["uz", "O'zbekcha"], ["ru", "Русский"], ["en", "English"]].map(([c, n]) => `<button class="${S.lang === c ? "on" : ""}" data-l="${c}">${n}</button>`).join("")}</div>
       <h2>${t("login_t")}</h2><p>${t("login_hint")}</p>
       <div id="tgw" class="tgw"><div class="spinner"></div></div>
       ${errCode ? `<p class="err-msg" style="display:block">${esc(errText({ code: errCode }))}</p>` : ""}
       <p id="tgopen" class="muted" style="font-size:13px;margin-top:18px"></p>
     </div></div>`;
+    document.getElementById("llang").onclick = (e) => {
+      const b = e.target.closest("[data-l]"); if (!b || b.dataset.l === S.lang) return;
+      S.lang = b.dataset.l; store.set("lang", S.lang); document.documentElement.lang = S.lang; showLogin(errCode);
+    };
     let cfg = {};
     try { cfg = await api("GET", "/api/auth/config"); } catch (_) { /* tarmoq */ }
     const box = document.getElementById("tgw");
