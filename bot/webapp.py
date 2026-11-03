@@ -180,8 +180,12 @@ def validate_core(data: dict, partial: bool, currencies: set[str]) -> dict:
 async def auth_mw(request: web.Request, handler):
     if not request.path.startswith("/api/"):
         resp = await handler(request)
-        # Telegram webview keshni qattiq ushlaydi — har safar ETag/Last-Modified bilan tekshirsin
-        resp.headers["Cache-Control"] = "no-cache"
+        if request.path.startswith("/static/") and request.query.get("v"):
+            # index.html fayl versiyasini (mtime) URL ga qo'shadi — o'zgarsa URL ham o'zgaradi,
+            # shuning uchun brauzer qayta tekshirmasdan keshdan oladi (okean orqali so'rov tejaladi)
+            resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            resp.headers["Cache-Control"] = "no-cache"
         return resp
     try:
         auth = request.headers.get("Authorization", "")
@@ -653,8 +657,19 @@ async def admin_toggle_currency(request: web.Request):
 
 
 # ---------------------------------------------------------------- statik
+def _asset_version(match: re.Match) -> str:
+    path = STATIC_DIR / "static" / match.group(1)
+    try:
+        v = int(path.stat().st_mtime)
+    except OSError:
+        v = 0
+    return f"/static/{match.group(1)}?v={v}"
+
+
 async def index(request: web.Request):
-    return web.FileResponse(STATIC_DIR / "index.html")
+    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    html = re.sub(r"/static/([\w.-]+)\?v=\w+", _asset_version, html)
+    return web.Response(text=html, content_type="text/html")
 
 
 def build_app(bot: Bot) -> web.Application:
