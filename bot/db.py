@@ -95,8 +95,10 @@ async def init(path: str = DB_PATH) -> None:
     await _db.executescript(SCHEMA)
     from .audit import SCHEMA as AUDIT_SCHEMA
     from .inbox import SCHEMA as INBOX_SCHEMA
+    from .decision_msgs import SCHEMA as DECISION_MSGS_SCHEMA
     await _db.executescript(AUDIT_SCHEMA)
     await _db.executescript(INBOX_SCHEMA)
+    await _db.executescript(DECISION_MSGS_SCHEMA)
     await _migrate()
     # Qidiruv uchun Python funksiyalari (kirill registri, apostroflar, raqamlar) — bot/search.py
     await _db.create_function("norm", 1, search.norm, deterministic=True)

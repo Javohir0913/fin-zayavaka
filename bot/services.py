@@ -5,8 +5,8 @@ bitta joyda yoziladi va bot ham, ilova ham bir xil ishlaydi.
 """
 from aiogram import Bot
 
-from . import audit, db, inbox, live, rates
-from .keyboards import decision_kb, main_menu, role_assign_kb
+from . import audit, db, decision_msgs, inbox, live, rates
+from .keyboards import main_menu, role_assign_kb
 from .notify import notify
 from .render import render_card
 from .utils import FIELD_TYPES, ROLES, allowed_roles, e, fmt_amount, fmt_date
@@ -64,7 +64,7 @@ async def create_request(bot: Bot, actor: dict, title: str, amount: float, curre
     fields = await db.list_fields()
     approvers = [i for i in await db.user_ids_by_roles(["approver", "admin", "superadmin"]) if i != actor["id"]]
     await inbox.add(approvers, "new_request", req, actor)
-    await notify(bot, approvers, "🆕 <b>Yangi zayavka!</b>\n\n" + render_card(req, fields), decision_kb(rid))
+    await decision_msgs.send_new(bot, approvers, req, fields)
     return rid
 
 
@@ -77,12 +77,14 @@ async def edit_request(bot: Bot, actor: dict, req: dict, upd: dict, changes: lis
     await db.add_history(req["id"], actor["id"], "edited", details[:1000])
     await audit.write_changes(actor, "request", req["id"], changes, label=_req_label(req))
     live.request_changed(req)
+    decision_msgs.sync(bot, req["id"])
     if req["user_id"] != actor["id"]:
         await inbox.add([req["user_id"]], "edited", {**req, **upd}, actor, details=details[:300])
         await notify(bot, [req["user_id"]], f"✏️ Zayavkangiz <b>#{req['id']}</b> tahrirlandi:\n{e(details)}\n\nKo'rish: /r{req['id']}")
 
 
-async def _status_change(actor: dict, rid: int, old_status: str, new_status: str, action: str, reason: str = "") -> None:
+async def _status_change(bot: Bot | None, actor: dict, rid: int, old_status: str, new_status: str, action: str,
+                         reason: str = "") -> None:
     await db.add_history(rid, actor["id"], action, reason)
     req = await db.get_request(rid)
     await audit.write(actor, "request", rid, action, "status", STATUS_TXT[old_status], STATUS_TXT[new_status],
@@ -90,12 +92,13 @@ async def _status_change(actor: dict, rid: int, old_status: str, new_status: str
     if reason:
         await audit.write(actor, "request", rid, action, "reject_reason", None, reason, label=_req_label(req))
     live.request_changed(req)
+    decision_msgs.sync(bot, rid)  # tasdiqlovchilardagi "Yangi zayavka" xabarini tahrirlash
 
 
 async def approve(bot: Bot, rid: int, actor: dict) -> bool:
     if not await db.decide(rid, "approved", actor["id"]):
         return False
-    await _status_change(actor, rid, "pending", "approved", "approved")
+    await _status_change(bot, actor, rid, "pending", "approved", "approved")
     req = await db.get_request(rid)
     if req["user_id"] != actor["id"]:
         await inbox.add([req["user_id"]], "approved", req, actor)
@@ -107,7 +110,7 @@ async def approve(bot: Bot, rid: int, actor: dict) -> bool:
 async def reject(bot: Bot, rid: int, actor: dict, reason: str) -> bool:
     if not await db.decide(rid, "rejected", actor["id"], reason):
         return False
-    await _status_change(actor, rid, "pending", "rejected", "rejected", reason)
+    await _status_change(bot, actor, rid, "pending", "rejected", "rejected", reason)
     req = await db.get_request(rid)
     if req["user_id"] != actor["id"]:
         await inbox.add([req["user_id"]], "rejected", req, actor, reason=(reason or "")[:300])
@@ -116,10 +119,10 @@ async def reject(bot: Bot, rid: int, actor: dict, reason: str) -> bool:
     return True
 
 
-async def cancel(rid: int, actor: dict) -> bool:
+async def cancel(bot: Bot | None, rid: int, actor: dict) -> bool:
     if not await db.decide(rid, "cancelled", actor["id"]):
         return False
-    await _status_change(actor, rid, "pending", "cancelled", "cancelled")
+    await _status_change(bot, actor, rid, "pending", "cancelled", "cancelled")
     # Tasdiqlovchilarga: endi ko'rib chiqish shart emas
     req = await db.get_request(rid)
     others = [i for i in await db.user_ids_by_roles(["approver", "admin", "superadmin"]) if i != actor["id"]]
@@ -131,7 +134,7 @@ async def reopen(bot: Bot, rid: int, actor: dict) -> bool:
     before = await db.get_request(rid)
     if not before or not await db.reopen(rid):
         return False
-    await _status_change(actor, rid, before["status"], "pending", "reopened")
+    await _status_change(bot, actor, rid, before["status"], "pending", "reopened")
     if before["user_id"] != actor["id"]:
         await inbox.add([before["user_id"]], "reopened", before, actor)
         await notify(bot, [before["user_id"]], f"↩️ Zayavkangiz <b>#{rid}</b> qayta ko'rib chiqishga qaytarildi.")

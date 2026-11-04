@@ -449,7 +449,7 @@ async def request_action(request: web.Request):
     elif action == "cancel":
         if r["user_id"] != user["id"]:
             raise ApiError(403, "forbidden")
-        done = await services.cancel(r["id"], user)
+        done = await services.cancel(bot, r["id"], user)
     else:
         need(user, "admin")
         done = await services.reopen(bot, r["id"], user)

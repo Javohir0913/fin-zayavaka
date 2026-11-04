@@ -218,6 +218,8 @@ async def reject_start(cb: CallbackQuery, user: dict, state: FSMContext):
     req = await db.get_request(rid)
     if not req or req["status"] != "pending":
         await cb.answer("Bu zayavka allaqachon ko'rib chiqilgan", show_alert=True)
+        if req:
+            await edit_card(cb.message, req, user)  # eskirgan tugmalarni olib tashlaymiz
         return
     await state.set_state(RejectReq.reason)
     await state.update_data(req_id=rid)
@@ -266,10 +268,10 @@ async def cancel_req(cb: CallbackQuery, user: dict):
 
 
 @router.callback_query(F.data.startswith("rq:cny:"))
-async def cancel_req_yes(cb: CallbackQuery, user: dict):
+async def cancel_req_yes(cb: CallbackQuery, user: dict, bot: Bot):
     rid = int(cb.data.split(":")[2])
     req = await db.get_request(rid)
-    if not req or req["user_id"] != user["id"] or not await services.cancel(rid, user):
+    if not req or req["user_id"] != user["id"] or not await services.cancel(bot, rid, user):
         await cb.answer("Bekor qilib bo'lmadi", show_alert=True)
         return
     await cb.answer("Bekor qilindi")
