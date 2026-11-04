@@ -1,6 +1,8 @@
 window.I18N = {
   uz: {
     app_name: "Xarajatlar",
+    login_tag: "Xarajat zayavkalarini bir joyda yarating, tasdiqlang va kuzating.",
+    login_f1: "Zayavka yaratish va kuzatish", login_f2: "Tasdiqlash bir bosishda", login_f3: "O'zgarishlar darhol ko'rinadi",
     hello: "Salom",
     tab_home: "Asosiy", tab_requests: "Zayavkalar", tab_due: "Muddatlar", tab_more: "Yana",
     new_request: "Yangi zayavka", edit_request: "Tahrirlash",
@@ -84,6 +86,8 @@ window.I18N = {
   },
   ru: {
     app_name: "Расходы",
+    login_tag: "Создавайте, согласуйте и отслеживайте заявки на расходы в одном месте.",
+    login_f1: "Создание и отслеживание заявок", login_f2: "Согласование в один клик", login_f3: "Изменения видны сразу",
     hello: "Привет",
     tab_home: "Главная", tab_requests: "Заявки", tab_due: "Сроки", tab_more: "Ещё",
     new_request: "Новая заявка", edit_request: "Редактирование",
@@ -167,6 +171,8 @@ window.I18N = {
   },
   en: {
     app_name: "Expenses",
+    login_tag: "Create, approve and track expense requests in one place.",
+    login_f1: "Create and track requests", login_f2: "One-tap approval", login_f3: "Changes appear instantly",
     hello: "Hi",
     tab_home: "Home", tab_requests: "Requests", tab_due: "Due", tab_more: "More",
     new_request: "New request", edit_request: "Edit request",

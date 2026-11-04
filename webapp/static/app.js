@@ -1369,15 +1369,24 @@
     S.renderId++;
     S.me = null;
     closeSheet();
-    app.innerHTML = `<div class="center-screen"><div class="login">
-      <div class="ill bg-primary">${ic("telegram")}</div>
-      <div class="seg login-lang" id="llang">${[["uz", "O'zbekcha"], ["ru", "Русский"], ["en", "English"]].map(([c, n]) => `<button class="${S.lang === c ? "on" : ""}" data-l="${c}">${n}</button>`).join("")}</div>
-      <div class="seg login-theme" id="ltheme">${["auto", "light", "dark"].map((m) => `<button class="${S.themePref === m ? "on" : ""}" data-m="${m}">${t("th_" + m)}</button>`).join("")}</div>
-      <h2>${t("login_t")}</h2><p>${t("login_hint")}</p>
-      <div id="tgw" class="tgw"><div class="spinner"></div></div>
-      ${errCode ? `<p class="err-msg" style="display:block">${esc(errText({ code: errCode }))}</p>` : ""}
-      <p id="tgopen" class="muted" style="font-size:13px;margin-top:18px"></p>
-    </div></div>`;
+    app.innerHTML = `<div class="auth">
+      <aside class="auth-brand">
+        <div class="ab-logo">${ic("wallet")}<span>${t("app_name")}</span></div>
+        <p class="ab-tag">${t("login_tag")}</p>
+        <ul class="ab-feat">${[["file", "login_f1"], ["check", "login_f2"], ["refresh", "login_f3"]].map(([i, k]) => `<li><span>${ic(i)}</span>${t(k)}</li>`).join("")}</ul>
+      </aside>
+      <main class="auth-main"><div class="login">
+        <div class="login-prefs">
+          <div class="seg" id="llang">${[["uz", "O'zbekcha"], ["ru", "Русский"], ["en", "English"]].map(([c, n]) => `<button class="${S.lang === c ? "on" : ""}" data-l="${c}">${n}</button>`).join("")}</div>
+          <div class="seg" id="ltheme">${["auto", "light", "dark"].map((m) => `<button class="${S.themePref === m ? "on" : ""}" data-m="${m}">${t("th_" + m)}</button>`).join("")}</div>
+        </div>
+        <div class="ill bg-primary">${ic("telegram")}</div>
+        <h2>${t("login_t")}</h2><p class="login-hint">${t("login_hint")}</p>
+        <div id="tgw" class="tgw"><div class="spinner"></div></div>
+        ${errCode ? `<p class="err-msg" style="display:block">${esc(errText({ code: errCode }))}</p>` : ""}
+        <p id="tgopen" class="login-alt"></p>
+      </div></main>
+    </div>`;
     document.getElementById("llang").onclick = (e) => {
       const b = e.target.closest("[data-l]"); if (!b || b.dataset.l === S.lang) return;
       S.lang = b.dataset.l; store.set("lang", S.lang); document.documentElement.lang = S.lang; showLogin(errCode);
